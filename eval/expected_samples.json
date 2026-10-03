@@ -1,0 +1,14 @@
+{
+  "https://www.wuhan.gov.cn/zwgk/xxgk/zfwj/bgtwj/202608/t20260805_2830143.shtml": {
+    "expected_title": "<待人工填写：打开该 URL，复制浏览器里的真实标题>",
+    "note": "这个值必须来自浏览器，不能从 list.jsonl 抄——抄了就等于自己跟自己对。"
+  },
+  "https://www.wuhan.gov.cn/zwgk/xxgk/zfwj/bgtwj/202606/t20260610_2775977.shtml": {
+    "expected_title": "<待人工填写：打开该 URL，复制浏览器里的真实标题>",
+    "note": "这个值必须来自浏览器，不能从 list.jsonl 抄——抄了就等于自己跟自己对。"
+  },
+  "https://www.wuhan.gov.cn/zwgk/xxgk/zfwj/bgtwj/202604/t20260421_2755776.shtml": {
+    "expected_title": "<待人工填写：打开该 URL，复制浏览器里的真实标题>",
+    "note": "这个值必须来自浏览器，不能从 list.jsonl 抄——抄了就等于自己跟自己对。"
+  }
+}

@@ -1,0 +1,6 @@
+# Phase 1 依赖（纯 Python，无 LLM）
+requests>=2.31
+beautifulsoup4>=4.12
+lxml>=5.0
+
+# Phase 2 会新增 LLM 客户端依赖（届时按 SPEC 流程申请）

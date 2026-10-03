@@ -1,0 +1,25 @@
+# 密钥（绝不入库）
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# 爬取原始落盘（可重新生成）
+data/raw/
+
+# 编辑器
+.vscode/
+.idea/
+
+# 会话级临时文件夹（全局 hook 自动创建，不是项目内容）
+_tasks/
+
+# 外部审查者 wb 的工具运行状态（由 wb 自己维护，非本项目源码）
+# 为什么排除：它是 wb 程序的工作目录，内容每次运行都在变；
+# 权威事实在 _handoff/CONTEXT.md，那份是入库的。
+.workbuddy/

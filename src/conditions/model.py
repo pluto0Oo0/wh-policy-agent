@@ -99,6 +99,18 @@ class Condition:
     #   （老政策/新政策），豁免表达的是学历分层。**混用会让 cohort 变成万能字段。**
     exempt_when: dict | None = None
 
+    # ── 追问话术（2026-10-13 新增，SPEC §2.2 扩展，所有者已批）────
+    # `ambiguity` 存的是"**原文里的模糊表述**"（如「正常缴纳」）；
+    # `ask` 存的是"**该问用户什么**"（如「你有没有断缴或补缴社保的记录？」）。
+    #
+    # 为什么必须分开：把政策术语原样抛回给用户（"什么算正常缴纳？"），
+    # 等于**把裁量责任推给了不该承担它的人** —— 用户答不出政策定义。
+    #
+    # 为什么由标注时人工填、不由引擎生成：
+    #   不同 ambiguity 该问的东西不同（"正常缴纳"问断缴；"积极求职创业"问创业证明），
+    #   这些要理解政策语境。**引擎自动生成的话，话术会千篇一律。**
+    ask: str | None = None
+
     # ── 核对留痕（D17：AI 起草 + 所有者蜜罐核对）────────────────
     # 为什么这三条要进数据模型、而不是记在别的地方：
     #   SPEC §6 Phase 2 要用 golden set 当 ground truth 去评 LLM 抽取。
@@ -165,6 +177,21 @@ class Condition:
                     f"{self.cond_id}: exempt_when 的 op={self.exempt_when['op']!r} 不合法，"
                     f"可选 {OPS}"
                 )
+
+        # ── ask 与 ambiguity 配套 ─────────────────────────────────
+        # 为什么是 **warn 不是 raise**：`ask` 要所有者人工填，
+        # 现在 golden set 里还没填 —— 报错会阻断加载。
+        # 但**必须出声**：一条 ambiguity 没有配套追问话术，
+        # CLI 就只能把政策术语原样抛给用户，那是"让人答不出的问题"。
+        if self.ambiguity and not self.ask:
+            self.warnings.append(
+                f"{self.cond_id}: 有 ambiguity={self.ambiguity!r} 但没有 ask（追问话术）"
+                f" —— CLI 只能把政策术语原样抛给用户，请补 ask"
+            )
+        if self.ask and not self.ambiguity:
+            self.warnings.append(
+                f"{self.cond_id}: 有 ask 但没有 ambiguity —— 没有模糊表述就不需要追问，是否标错？"
+            )
 
         # ── exempt_when 与 ambiguity **互斥**（2026-10-13 由 wb 指出，所有者已批）──
         #

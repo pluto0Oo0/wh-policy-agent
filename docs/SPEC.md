@@ -176,6 +176,25 @@
 | `formula` | str \| null | 计算类公式（见 §3.4） |
 | `source_text` | str | **原文摘录**——用于溯源，必填 |
 | `ambiguity` | str \| null | 模糊表述原文（如"积极求职创业"）；**非 null 时判定必须返回 UNKNOWN** |
+| **`exempt_when`** | dict \| null | **豁免条件**。格式：`{"field": str, "op": str, "value": any}`。<br>子条件成立时本条跳过，**视为满足（PASS）**。<br>**与 `ambiguity` 互斥**——有 `exempt_when` 时 `ambiguity` 必须为 null。<br>追溯证据用 `source_text`，**不用 `ambiguity`**。 |
+| **`ask`** | str \| null | **追问话术**（`ambiguity` 非 null 时给用户看的具体问题，标注时人工填） |
+
+> **`exempt_when` 为什么必须存在**（2026-10-13 实测暴露，SPEC 原契约缺这个字段）：
+> 78 号文原文「年龄不满45周岁（**研究生不受年龄限制**）」——
+> `age < 45` 这一条**对研究生不适用**，但原契约里没有任何字段能表达"某个子条件成立时本条豁免"。
+>
+> **为什么不能用 `ambiguity` 代替**：`ambiguity` 的语义是"判不了"→ `UNKNOWN`，
+> 而豁免的语义是"这条对他成立"→ `PASS`。**两者结果完全相反。**
+> 没有 `exempt_when` 时，50 岁的博士会被判 `FAIL`（实测过）。
+>
+> **为什么不能用 `applies_to_cohort` 代替**：cohort 表达的是 grandfathering **时间轨道**
+> （老政策/新政策），豁免表达的是**学历分层**。混用会让 cohort 退化成万能字段。
+>
+> **为什么必须与 `ambiguity` 互斥**：两者语义重叠且处置相反。
+> 同时存在 = 冗余 = **改一个忘改另一个 = 静默失效**（实测来源：`_01` 原来的
+> `ambiguity` 就是"研究生不受年龄限制"，加了 `exempt_when` 后两者表达同一件事）。
+> 构造函数里做**断言**（不是警告）——宁可加载时就炸。
+
 
 ### 2.3 用户画像 `data/profile.json`
 

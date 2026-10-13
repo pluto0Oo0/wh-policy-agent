@@ -291,13 +291,19 @@ def check_eligibility(
             # 却不知道问题不在他那边。**这是"让人做无用功"的错误信息。**
             amount = calc_amount(profile, cond)
             if amount is None:
-                # 算不出来：**通常是缺 market_rent**（六重叠加第 1 重的前提）
-                status, detail = UNKNOWN, "缺 market_rent（市场租金需用户提供）"
+                # 算不出来 = **缺输入字段** → 走正常的"缺字段"路径，
+                # 让 CLI 用统一的方式追问用户。
+                #
+                # ⚠️ 这个字段名是**与计算规则耦合**的（目前只有六重叠加一条规则，
+                #    它第 1 重依赖 market_rent）。
+                #    等 `formula` 结构化后，"缺哪个字段"应由规则自己声明，
+                #    而不是写死在引擎里。**已记为契约缺口。**
+                status, detail, missing_field = UNKNOWN, None, "market_rent"
             elif amount.get("type") == "unknown":
-                # 形态不认识：这是**引擎的短板**，不是用户的
-                status, detail = UNKNOWN, amount.get("detail")
+                # 形态不认识：这是**引擎的短板**，不是用户的 —— 才用 status_detail
+                status, detail, missing_field = UNKNOWN, amount.get("detail"), None
             else:
-                status, detail = PASS, None
+                status, detail, missing_field = PASS, None, None
             reasons.append(
                 {
                     "cond_id": cond.cond_id,
@@ -310,6 +316,8 @@ def check_eligibility(
                     "is_calc": True,
                 }
             )
+            if missing_field and missing_field not in missing:
+                missing.append(missing_field)
             if amount and amount.get("type") != "unknown":
                 amounts.append(amount)
             continue
@@ -533,9 +541,10 @@ def _run_fault_injection() -> int:
     # ⚠️ 必须**新跑一次**取结果 —— 上面那个 `r` 是"已废止"的调用，reasons 本来就是空的
     r_calc = check_eligibility(profile, conds, policy_meta=doc)
     cr = next((x for x in r_calc["reasons"] if x.get("is_calc")), None)
-    okd = cr is not None and "market_rent" in str(cr.get("status_detail", ""))
-    print(f"  {'✅' if okd else '🔴'} 计算类缺数据 → status_detail 说清缺什么   "
-          f"{cr.get('status_detail') if cr else '(无计算类 reason)'}")
+    # 缺输入字段 → 走 missing_fields（用户能补），**不是** status_detail（引擎短板）
+    okd = cr is not None and "market_rent" in r_calc["missing_fields"]
+    print(f"  {'✅' if okd else '🔴'} 计算类缺输入 → 进 missing_fields（用户能补）   "
+          f"missing={r_calc['missing_fields']}")
     if not okd:
         bad += 1
 

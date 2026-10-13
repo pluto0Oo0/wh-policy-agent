@@ -113,13 +113,16 @@ def _calc_housing(profile: dict) -> dict | None:
     detail = (
         f"按市场租金 {market_rent:.0f} 元/月估算："
         + (
-            f"前 {free_years} 年免租（每月免 {free_saving_per_month:.0f} 元，"
-            f"封顶 {free_cap:.0f} 元），"
+            f"前 {free_years} 年免租（每月免 {free_saving_per_month:.0f} 元"
+            + (f"，已触封顶 {free_cap:.0f} 元/月" if free_saving_per_month < market_rent else "")
+            + "），"
             if free_years
-            else "无免租期，"
+            else "无免租期（该学历不享受免租），"
         )
-        + f"其余 {discounted_years} 年在 3 年减免期内按不高于市场租金的 70% 缴纳。"
-        f"⚠️「不高于 70%」是上限，实际折扣由各区房源确定，本数偏高。"
+        + f"其余 {discounted_years} 年每月省 {discounted_saving_per_month:.0f} 元"
+        f"（= 市场租金 {market_rent:.0f} × 30%），"
+        f"因为政策要求「按不高于市场租金的 70% 缴纳」。"
+        f"⚠️「不高于 70%」是**上限**，实际折扣由各区房源确定，本数是按上限算的，偏高。"
     )
 
     return {
@@ -213,9 +216,13 @@ def _run_acceptance() -> int:
             continue
         if r["free_years"] != want_free_years:
             failures.append(f"断言2：{edu} 免租期应 {want_free_years} 年，实得 {r['free_years']}")
+        # 精度：写清 30% 是"市场租金 × 30%"，不要只写"× 30%"
+        # （2026-10-13 wb 指出：数字对但标注不精确，面试被追问"30% 是什么"要答得出）
+        disc_monthly = mrent * (1 - DISCOUNT_RATE)
         print(f"  {edu} 市场租金 {mrent:.0f} → 3 年累计省 {r['value']:.0f} 元"
               f"（免租 {r['free_years']} 年 × {r['monthly_free']:.0f} 元/月 + "
-              f"{r['discounted_years']} 年 × 30%）")
+              f"折扣 {r['discounted_years']} 年 × {disc_monthly:.0f} 元/月"
+              f"〔= 市场租金 {mrent:.0f} × 30%〕）")
 
     # 断言 3：博士的免租封顶必须生效（市场租金 5000 > 封顶 2000）
     p = {**profile, "education": "博士", "market_rent": 5000.0}

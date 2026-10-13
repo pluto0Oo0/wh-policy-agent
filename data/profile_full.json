@@ -1,0 +1,15 @@
+{
+  "education": "硕士",
+  "education_type": "全日制",
+  "grad_year": 2026,
+  "hukou_wuhan": false,
+  "first_insurance_date": "2026-07-01",
+  "employed": true,
+  "housing_owned_in_wuhan": false,
+  "region": "洪山",
+  "age": 23,
+  "social_insurance_active": true,
+  "marital_status": "未婚",
+  "market_rent": 3000,
+  "qualification_valid": true
+}

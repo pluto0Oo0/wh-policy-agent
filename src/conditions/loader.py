@@ -55,6 +55,7 @@ def load_conditions(path: str | Path) -> list[Condition]:
 
     conditions: list[Condition] = []
     skipped: list[str] = []
+    domain_errors: list[str] = []
 
     for lineno, line in enumerate(raw_lines, start=1):
         try:
@@ -67,12 +68,33 @@ def load_conditions(path: str | Path) -> list[Condition]:
         try:
             # 只把模型认识的字段传进去，多余字段（如文档里附带的注释）忽略
             known = {f for f in Condition.__dataclass_fields__ if f != "warnings"}
-            conditions.append(Condition(**{k: v for k, v in data.items() if k in known}))
+            cond = Condition(**{k: v for k, v in data.items() if k in known})
         except ConditionError as e:
             skipped.append(f"第 {lineno} 行：{e}")
+            continue
         except TypeError as e:
             # 字段名不认识 / 必填字段缺失
             skipped.append(f"第 {lineno} 行：字段不匹配（{e}）")
+            continue
+
+        # ── 取值域交集检测（强检测，2026-10-13 新增）────────────
+        # 为什么是 fail 不是 warn：**不相交 = 这条永远不可能 PASS**，
+        # 那不是"可能有问题"，是"确定是错的"。warn 会让它混过去。
+        domain_problem = check_value_domain(cond)
+        if domain_problem:
+            domain_errors.append(f"{cond.cond_id}：{domain_problem}")
+
+        conditions.append(cond)
+
+    # ── 取值域不相交：**确定是错的，必须停下来** ──────────────
+    # 这是 `_03` 那次教训落成的检查。它当初靠"偶然跑一次真数据"才被发现。
+    if domain_errors:
+        raise ConditionError(
+            f"{path} 里 {len(domain_errors)} 条条件的取值域与画像字段**没有交集**：\n"
+            + "\n".join(f"  · {e}" for e in domain_errors)
+            + "\n→ 这类条件**永远不可能 PASS**，会让整体判定永远落在同一个结论上。\n"
+            "→ 请核对是标注抄错了，还是画像字段的取值域定义要改。"
+        )
 
     # ── 部分坏：告警，继续 ────────────────────────────────────
     if skipped:
@@ -106,6 +128,104 @@ def load_conditions(path: str | Path) -> list[Condition]:
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GOLDEN_PATH = PROJECT_ROOT / "eval" / "golden_conditions.jsonl"
 
+# 78 号文纵切的预期条件数。
+# 为什么写成常量而不是在断言里写死字面量：
+#   2026-10-13 实测踩过 —— 断言里写死 `!= 9`，golden set 从 9 条涨到 13 条后
+#   验收直接失败，**而失败原因是"断言过期"，不是"数据错了"**。
+#   写成一个有名字的常量，下次改数据时至少会看到它、需要主动改它。
+EXPECTED_CONDITION_COUNT = 13
+
+# ══════════════════════════════════════════════════════════════
+# 取值域交集检测（2026-10-13 新增，wb 建议的"强检测"）
+# ══════════════════════════════════════════════════════════════
+# 【这条检测的由来】
+#   `_03` 曾写成 `education_type in ["全日制大专及以上"]`，而画像里
+#   `education_type` 的取值域是 `{全日制, 非全日制}` —— **两个集合没有交集**。
+#   后果：**任何画像都必然 FAIL** → 整体永远 INELIGIBLE。
+#
+#   而它**没有被任何检查发现**：格式全合法、`check_eligibility` 照常返回 FAIL
+#   （FAIL 是正常返回值）。**是跑真数据时偶然暴露的。**
+#
+#   → 一条永远不可能 PASS 的条件，和一条永远不报警的检查，是同一种东西。
+#
+# 【取值域为什么写在这里而不是从 SPEC 读】
+#   SPEC §2.3 目前**没有**定义画像字段的取值域（只给了字段名和类型）。
+#   这是又一个"写代码才暴露的契约缺口" —— 已报 wb/所有者，待补进 SPEC §2.3。
+#   ⚠️ 在那之前，这份常量是**唯一的事实源**，改画像字段必须同步改这里。
+FIELD_DOMAINS: dict[str, object] = {
+    "education": {"大专", "本科", "硕士", "博士"},
+    "education_type": {"全日制", "非全日制"},
+    "grad_year": (1980, 2100),          # 年份区间
+    "grad_years": (0, 60),              # 毕业年数区间（引擎从 grad_year 派生）
+    "hukou_wuhan": {True, False},
+    "first_insurance_date": ("1900-01-01", "2100-12-31"),  # 日期区间（ISO 字符串）
+    "employed": {True, False},
+    "housing_owned_in_wuhan": {True, False},
+    "age": (16, 70),
+    "social_insurance_active": {True, False},
+    "marital_status": {"未婚", "已婚"},
+    "market_rent": (0.0, 100000.0),
+    # 以下字段是 2026-10-13 新增条件引入的，画像里**还没有**（已记为待定项）
+    "has_dependents": {True, False},
+    "qualification_valid": {True, False},
+    "wants_short_stay": {True, False},
+}
+
+
+def check_value_domain(cond) -> str | None:
+    """检查一条条件的 `value` 与画像字段取值域**有没有交集**。
+
+    返回 None = 通过；返回字符串 = 不相交的原因。
+
+    ⚠️ 计算类不检 —— 它的 `field`（如 `rent`）是**输出字段**，不是画像输入。
+       拿输出字段去查画像取值域，会报出一堆假警报。
+    """
+    if cond.cond_type == "计算":
+        return None
+
+    # `exists` 只判"字段有没有值"，与取值无关
+    if cond.op == "exists":
+        return None
+
+    domain = FIELD_DOMAINS.get(cond.field)
+    if domain is None:
+        # 取值域未知的字段：不报错（报错会变成假警报），但也查不了。
+        # 让上层汇总提示，避免"以为查过了其实没查"。
+        return None
+
+    # ── 集合型取值域 ────────────────────────────────────────
+    if isinstance(domain, set):
+        if cond.op == "in":
+            if not (set(cond.value) & domain):
+                return (f"{cond.field} 的取值域是 {sorted(map(str, domain))}，"
+                        f"而条件是 {cond.value} —— **两者没有交集，这条永远不可能 PASS**")
+        elif cond.op == "==":
+            if cond.value not in domain:
+                return (f"{cond.field} 的取值域是 {sorted(map(str, domain))}，"
+                        f"而条件是 == {cond.value!r} —— **永远不可能相等**")
+        return None
+
+    # ── 区间型取值域 ────────────────────────────────────────
+    if isinstance(domain, tuple) and len(domain) == 2:
+        lo, hi = domain
+        try:
+            v = cond.value
+            if cond.op in (">=", ">"):
+                # 阈值必须落在区间内，否则这条永远不成立（或永远成立）
+                if not (lo <= v <= hi):
+                    return f"{cond.field} 的合理区间是 {domain}，而阈值 {v!r} 落在区间外"
+            elif cond.op in ("<=", "<"):
+                if not (lo <= v <= hi):
+                    return f"{cond.field} 的合理区间是 {domain}，而阈值 {v!r} 落在区间外"
+            elif cond.op == "==":
+                if not (lo <= v <= hi):
+                    return f"{cond.field} 的合理区间是 {domain}，而 {v!r} 落在区间外"
+        except TypeError:
+            # 类型不可比（如 str 和 int 比大小）—— 这本身就是个错误
+            return f"{cond.field} 的取值域是区间 {domain}，而 value={cond.value!r} 类型不匹配"
+    return None
+
+
 
 def _run_acceptance() -> int:
     """加载 golden set 并做四条断言，返回退出码（0 = 全过）。"""
@@ -115,9 +235,12 @@ def _run_acceptance() -> int:
 
     failures: list[str] = []
 
-    # 断言 1：78 号文的 9 条都在
-    if len(conds) != 9:
-        failures.append(f"断言1：期望 9 条，实得 {len(conds)} 条")
+    # 断言 1：78 号文的 13 条都在
+    if len(conds) != EXPECTED_CONDITION_COUNT:
+        failures.append(
+            f"断言1：期望 {EXPECTED_CONDITION_COUNT} 条，实得 {len(conds)} 条"
+            f"（若 golden set 确实改了，请同步改 EXPECTED_CONDITION_COUNT）"
+        )
 
     # 断言 2：cond_id 唯一（重复会让 reason 列表对不上号）
     ids = [c.cond_id for c in conds]
@@ -176,6 +299,23 @@ def _run_fault_injection() -> int:
         ("合法字段但 cond_type 非法",
          '{"cond_id":"x","doc_id":"d","applies_to_cohort":"全体",'
          '"cond_type":"瞎写的","field":"f","op":"==","value":1,"source_text":"原文"}\n', "抛异常"),
+        # ── 关键用例：**复现 `_03` 当初那个 bug 的原始写法** ──────────
+        # 如果这条检测当初就在，`_03` 会在第一次加载时被抓到，
+        # 而不是等到"偶然跑了一次真数据"才暴露。
+        ("复现 _03 原写法（取值域不相交）",
+         '{"cond_id":"t_03","doc_id":"d","applies_to_cohort":"全体",'
+         '"cond_type":"资格","field":"education_type","op":"in",'
+         '"value":["全日制大专及以上"],"source_text":"全日制大专以上学历"}\n', "抛异常"),
+        # ── 对照：同一个字段，**交集存在**时不该误报 ──────────────────
+        ("对照：同字段取值域有交集（不该误报）",
+         '{"cond_id":"t_04","doc_id":"d","applies_to_cohort":"全体",'
+         '"cond_type":"资格","field":"education_type","op":"==",'
+         '"value":"全日制","source_text":"全日制大专以上学历"}\n', "通过"),
+        # ── 计算类的 field 是输出字段，不该拿画像取值域去查（防假警报）──
+        ("对照：计算类的输出字段不该被误报",
+         '{"cond_id":"t_09","doc_id":"d","applies_to_cohort":"全体",'
+         '"cond_type":"计算","field":"rent","op":"==","value":null,'
+         '"formula":"x","source_text":"租金公式"}\n', "通过"),
     ]
 
     print("=" * 62)

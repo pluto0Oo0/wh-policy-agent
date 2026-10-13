@@ -143,8 +143,18 @@ def _eval_condition(profile: dict, cond: Condition) -> tuple[str, str | None]:
 
     # ── 3. 画像字段 ─────────────────────────────────────────
     if cond.op == "exists":
-        # exists 判的是"字段有没有值"，不是"值等于什么"
-        value = profile.get(cond.field)
+        # ⚠️ 「字段不存在」≠「值为 False」—— 这是 UNKNOWN，不是 FAIL。
+        #
+        # 2026-10-13 实测踩过：`_11`（has_dependents exists）在画像里没这个字段时
+        # 被我的实现判成 FAIL，于是整体变 INELIGIBLE —— 而真相是"我们不知道他有没有
+        # 需要随迁的家属"，该返回 UNKNOWN 并**追问这个字段**。
+        #
+        # **判 FAIL 的后果**：用户被告知"你不符合"，而他只是没填一项信息。
+        # 这和本模块开头写的「UNKNOWN 不是 INELIGIBLE」是同一条原则 ——
+        # 我把它写进了注释，却在 exists 分支上违反了它。
+        if cond.field not in profile:
+            return UNKNOWN, cond.field
+        value = profile[cond.field]
         return (PASS if value not in (None, "") else FAIL), None
 
     if cond.field not in profile or profile[cond.field] is None:
@@ -346,13 +356,19 @@ def _run_fault_injection() -> int:
     if not ok:
         bad += 1
 
-    # 缺失字段 → 该字段必须被记成 UNKNOWN（**不测整体 verdict**：
-    # 只要还有别的条件 FAIL，整体就是 INELIGIBLE，那是对的，不该拿来测"缺字段"这个机制）
-    thin = {k: v for k, v in profile.items() if k not in ("housing_owned_in_wuhan", "social_insurance_active")}
+    # 缺失字段 → 该字段必须被记成 UNKNOWN
+    # ⚠️ **不写死 cond_id** —— 条件编号会随 golden set 变动漂移
+    #    （2026-10-13 踩过：`_03` 拆两条后全部重编号，写死 `_06`/`_07` 的断言直接失效，
+    #     而失效原因是"断言过期"不是"代码错了"。和 loader 里那个写死的 `9` 同一个毛病。）
+    #    改成按 `field` 反查该受影响的条，这样重编号不会让它失效。
+    removed = ("housing_owned_in_wuhan", "social_insurance_active")
+    thin = {k: v for k, v in profile.items() if k not in removed}
     r2 = check_eligibility(thin, conds, policy_meta=doc)
-    unknown_ids = {x["cond_id"][-2:] for x in r2["reasons"] if x["status"] == UNKNOWN}
-    ok2 = {"07", "06"} <= unknown_ids
-    print(f"  {'✅' if ok2 else '🔴'} 缺字段 → 对应条件记 UNKNOWN     UNKNOWN 的条件={sorted(unknown_ids)}")
+    affected = {c.cond_id for c in conds if c.field in removed}
+    got_unknown = {x["cond_id"] for x in r2["reasons"] if x["status"] == UNKNOWN}
+    ok2 = affected <= got_unknown
+    print(f"  {'✅' if ok2 else '🔴'} 缺字段 → 对应条件记 UNKNOWN     受影响 {len(affected)} 条，"
+          f"其中 UNKNOWN {len(affected & got_unknown)} 条")
     if not ok2:
         bad += 1
 

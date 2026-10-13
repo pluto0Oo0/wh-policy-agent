@@ -136,52 +136,27 @@ def _matches(profile: dict, expr: dict) -> bool | None:
         return None
 
 
-def _eval_condition(profile: dict, cond: Condition) -> tuple[str, str | None, bool]:
-    """判定单条条件。
+def _eval_normal(profile: dict, cond: Condition) -> tuple[str, str | None]:
+    """**不含豁免**的正常判定。
 
     返回：
-        (状态, 缺失字段名或 None, 是否走了豁免)
+        (状态, 缺失字段名或 None)
 
-    判定顺序（**顺序本身是设计**）：
-        1. cohort 不适用 → N/A（**先分流，再判内容**）
-        2. 豁免条件成立  → PASS + 标记 exempted
-        3. 有 ambiguity  → UNKNOWN（模糊表述判不了，不许硬答）
-        4. 画像缺字段    → UNKNOWN + 记下缺哪个
-        5. 正常比较      → PASS / FAIL
+    为什么要单独抽出来：豁免是否"起了作用"，只能拿正常判定的结果当参照 ——
+    见 `_eval_condition` 第 2 步。**不先算出正常结论，就没法判断豁免有没有改变它。**
+
+    顺序（**顺序本身是设计**）：
+        1. 有 ambiguity  → UNKNOWN（模糊表述判不了，不许硬答）
+        2. 画像缺字段    → UNKNOWN + 记下缺哪个
+        3. 正常比较      → PASS / FAIL
     """
-    # ── 1. 轨道分流 ─────────────────────────────────────────
-    try:
-        if not resolve_cohort(profile, cond):
-            return NOT_APPLICABLE, None, False
-    except CohortError as e:
-        # 缺分界字段 → 判不了轨道 → UNKNOWN，并把缺的字段报出来
-        if "first_insurance_date" in str(e):
-            return UNKNOWN, "first_insurance_date", False
-        raise
-
-    # ── 2. 豁免条件（exempt_when）─────────────────────────────
-    # 语义：子条件对画像成立 → **本条视为满足（PASS）**，不是 UNKNOWN、更不是 N/A。
-    #
-    # 78 号文的例子：「年龄不满45周岁（研究生不受年龄限制）」
-    #   → 50 岁的博士，`_01` 应该判 **PASS**（他被豁免了，满足落户条件）。
-    #   → 判 FAIL 是错的（他会以为自己不能落户）；
-    #     判 UNKNOWN 也是错的（问他什么？他的学历已经告诉我们答案了）。
-    #
-    # ⚠️ 顺序必须在 ambiguity 之前：豁免成立时，本条的模糊性已无关紧要。
-    if cond.exempt_when:
-        hit = _matches(profile, cond.exempt_when)
-        if hit is True:
-            return PASS, None, True
-        # hit 为 None（判不了）时**不阻断**，继续往下走正常判定 ——
-        # 让下面的"缺字段"分支去报 UNKNOWN 并追问，处置点仍然只有一个。
-
-    # ── 3. 模糊表述 ─────────────────────────────────────────
+    # ── 1. 模糊表述 ─────────────────────────────────────────
     # SPEC §3.5：ambiguity 非 null 时**判定必须返回 UNKNOWN**，不许硬给答案。
     # 约 30% 的条件含模糊/需裁量表述（调研报告 §5.2 实测）。
     if cond.is_ambiguous:
-        return UNKNOWN, None, False
+        return UNKNOWN, None
 
-    # ── 4. 画像字段 ─────────────────────────────────────────
+    # ── 2. 画像字段 ─────────────────────────────────────────
     if cond.op == "exists":
         # ⚠️ 「字段不存在」≠「值为 False」—— 这是 UNKNOWN，不是 FAIL。
         #
@@ -193,15 +168,73 @@ def _eval_condition(profile: dict, cond: Condition) -> tuple[str, str | None, bo
         # 这和本模块开头写的「UNKNOWN 不是 INELIGIBLE」是同一条原则 ——
         # 我把它写进了注释，却在 exists 分支上违反了它。
         if cond.field not in profile:
-            return UNKNOWN, cond.field, False
+            return UNKNOWN, cond.field
         value = profile[cond.field]
-        return (PASS if value not in (None, "") else FAIL), None, False
+        return (PASS if value not in (None, "") else FAIL), None
 
     if cond.field not in profile or profile[cond.field] is None:
-        return UNKNOWN, cond.field, False
+        return UNKNOWN, cond.field
 
-    # ── 5. 比较 ─────────────────────────────────────────────
-    return (PASS if _compare(profile[cond.field], cond.op, cond.value) else FAIL), None, False
+    # ── 3. 比较 ─────────────────────────────────────────────
+    return (PASS if _compare(profile[cond.field], cond.op, cond.value) else FAIL), None
+
+
+def _eval_condition(profile: dict, cond: Condition) -> tuple[str, str | None, bool]:
+    """判定单条条件。
+
+    返回：
+        (状态, 缺失字段名或 None, 豁免是否**真正起了作用**)
+
+    第三个返回值是这一版的**关键修正**（2026-10-13，wb 指出）：
+        原实现是"`exempt_when` 命中就标 exempted"，**不管正常判定本来会不会通过**。
+        后果：23 岁的硕士，`_01`（年龄不满 45 周岁）本来就 PASS，却标成"因豁免而满足"。
+        → **豁免机制到底有没有生效，就永远测不出来了** ——
+          不管触发没触发都标"因豁免"，这是"永远不报警的检查 == 没检查"的变体。
+
+    现在的判据：**豁免只在它把结论从「不是 PASS」翻成「PASS」时才算数。**
+        正常就 PASS → 标"因符合"（不标豁免）
+        正常 FAIL / UNKNOWN，豁免后才 PASS → 标"因豁免而满足"
+
+    判定顺序（**顺序本身是设计**）：
+        1. cohort 不适用  → N/A（**先分流，再判内容**）
+        2. 正常判定       → 作为豁免是否起作用的**参照**
+        3. 豁免翻转结论   → PASS + 标记 exempted
+    """
+    # ── 1. 轨道分流 ─────────────────────────────────────────
+    try:
+        if not resolve_cohort(profile, cond):
+            return NOT_APPLICABLE, None, False
+    except CohortError as e:
+        # 缺分界字段 → 判不了轨道 → UNKNOWN，并把缺的字段报出来
+        if "first_insurance_date" in str(e):
+            return UNKNOWN, "first_insurance_date", False
+        raise
+
+    normal_status, missing = _eval_normal(profile, cond)
+
+    # ── 2. 豁免条件（exempt_when）─────────────────────────────
+    # 语义：子条件对画像成立，**且正常判定本来不通过** → 本条视为满足（PASS）。
+    #
+    # 78 号文的例子：「年龄不满45周岁（研究生不受年龄限制）」
+    #   → 50 岁的博士，`_01` 应该判 **PASS**（他被豁免了，满足落户条件）。
+    #   → 判 FAIL 是错的（他会以为自己不能落户）；
+    #     判 UNKNOWN 也是错的（问他什么？他的学历已经告诉我们答案了）。
+    #   → 但 23 岁的硕士正常就该 PASS —— 这时豁免**没做事**，不许标"因豁免"。
+    #
+    # 为什么正常判 UNKNOWN 时也算"豁免起了作用"：
+    #   比如某条含 ambiguity，正常只会返回"判不了"；豁免命中后能确定答 PASS，
+    #   结论从"判不了"变成"符合"，是豁免带来的，必须标出来。
+    #
+    # ⚠️ 豁免成立时**本条的模糊性已无关紧要**，所以豁免判定在正常判定之后即可，
+    #    不需要把 ambiguity 再挪到后面。
+    if cond.exempt_when:
+        hit = _matches(profile, cond.exempt_when)
+        if hit is True and normal_status != PASS:
+            return PASS, None, True
+        # hit 为 None（判不了）时**不阻断**，用正常判定的结果 ——
+        # 让"缺字段"分支去报 UNKNOWN 并追问，处置点仍然只有一个。
+
+    return normal_status, missing, False
 
 
 def check_eligibility(
@@ -517,6 +550,23 @@ def _run_fault_injection() -> int:
     oke = rr["reasons"][0].get("exempted") is True and rr["reasons"][0].get("exempted_by")
     print(f"  {'✅' if oke else '🔴'} 豁免理由被记录                      "
           f"exempted_by={rr['reasons'][0].get('exempted_by')}")
+    if not oke:
+        bad += 1
+
+    # ⚠️ 豁免**没起作用**时不许标"因豁免"（2026-10-13 修正，wb 指出）
+    #
+    # 23 岁的硕士：`_01`（年龄不满 45 周岁）**正常就 PASS**，豁免什么都没做。
+    # 原实现在这里也标"因豁免而满足" —— 后果是
+    #   **豁免机制到底有没有生效，永远测不出来**：不管触发没触发，输出都是同一句话。
+    # 这是"永远不报警的检查 == 没检查"的变体。
+    #
+    # 为什么这条断言必须自己存在：这个 bug 的诊断信息就是 CLI 那一行输出，
+    # 没有人会去怀疑"多标了一句豁免" —— 它看起来像是在**多给**用户信息。
+    rr = check_eligibility({**base, "age": 23, "education": "硕士"}, [c01],
+                           policy_meta=doc, as_of_year=2026)
+    oke = rr["reasons"][0]["status"] == PASS and "exempted" not in rr["reasons"][0]
+    print(f"  {'✅' if oke else '🔴'} 豁免未起作用时**不标**豁免          "
+          f"status={rr['reasons'][0]['status']} exempted={rr['reasons'][0].get('exempted')}")
     if not oke:
         bad += 1
 

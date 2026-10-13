@@ -31,6 +31,7 @@ SPEC §5 签名（不得改名）：
 """
 
 from src.conditions.model import CALC_TYPE, Condition, ConditionError
+from src.engine.calc import calc_amount
 from src.engine.cohort import CohortError, resolve_cohort
 
 # ── 单条条件的判定结果 ──────────────────────────────────────
@@ -52,11 +53,6 @@ STATUS_UNVERIFIED = "未核实"
 
 # 参与"资格判定"的条件类型。计算类不参与 —— 它产出的是金额，不是资格。
 ELIGIBILITY_TYPES = ("资格", "时序互斥", "材料")
-
-# `status_detail` 的两个取值（2026-10-13 新增，区分两种 UNKNOWN 的来源）
-# 为什么是常量而不是散在代码里：CLI 要按它决定给用户看什么话，
-# 两边各写一遍字符串就会漂移。
-CALC_NOT_IMPLEMENTED = "calc 未实现（calc.py 是纵切第 9 步，尚未编写）"
 
 
 class EligibilityError(ValueError):
@@ -268,6 +264,8 @@ def check_eligibility(
 
     reasons: list[dict] = []
     missing: list[str] = []
+    # 计算类产出的金额（可能多条；SPEC §2.4 的 amount 是单数，取第一条并说明）
+    amounts: list[dict] = []
 
     for cond in conditions:
         if cond.cond_type == CALC_TYPE:
@@ -285,22 +283,26 @@ def check_eligibility(
             # ── status_detail：区分两种完全不同的 UNKNOWN ──────────────
             # 2026-10-13 由 wb 指出、所有者已批。
             #
-            #   "calc 未实现"  → **引擎层**问题，**用户补字段没用**
-            #   "缺 <字段>"    → **数据层**问题，用户补了就能判
+            #   "缺 market_rent"  → **数据层**问题，**用户补了就能判**
+            #   "calc 未实现"     → **引擎层**问题，用户补字段没用
             #
             # 为什么必须区分：不区分的话，一个 UNKNOWN 里混着两种原因，
             # **输出上看不出来** —— 用户会去补一堆字段，然后发现还是 UNKNOWN，
             # 却不知道问题不在他那边。**这是"让人做无用功"的错误信息。**
-            #
-            # 什么时候会变成另一种：`calc.py`（纵切第 9 步）实现后，
-            # 它能算出金额 → 这里改成 PASS + amount；
-            # 算不出（如缺 market_rent）→ UNKNOWN + status_detail="缺 market_rent"。
-            status, missing_field = UNKNOWN, None
+            amount = calc_amount(profile, cond)
+            if amount is None:
+                # 算不出来：**通常是缺 market_rent**（六重叠加第 1 重的前提）
+                status, detail = UNKNOWN, "缺 market_rent（市场租金需用户提供）"
+            elif amount.get("type") == "unknown":
+                # 形态不认识：这是**引擎的短板**，不是用户的
+                status, detail = UNKNOWN, amount.get("detail")
+            else:
+                status, detail = PASS, None
             reasons.append(
                 {
                     "cond_id": cond.cond_id,
                     "status": status,
-                    "status_detail": CALC_NOT_IMPLEMENTED,
+                    "status_detail": detail,
                     "source_text": cond.source_text,
                     # 为什么单独标出来：它和其他条件的**产出语义不同**
                     # （资格类产 PASS/FAIL，计算类产 amount），
@@ -308,6 +310,8 @@ def check_eligibility(
                     "is_calc": True,
                 }
             )
+            if amount and amount.get("type") != "unknown":
+                amounts.append(amount)
             continue
 
         status, missing_field, exempted = _eval_condition(profile, cond)
@@ -347,7 +351,8 @@ def check_eligibility(
         "verdict": verdict,
         "reasons": reasons,
         "missing_fields": missing if verdict == VERDICT_UNKNOWN else [],
-        "amount": None,  # 由 calc_amount 填（纵切第 9 步）
+        "amount": amounts[0] if amounts else None,
+        "amount_count": len(amounts),  # 多条时提示调用方（本期只有 1 条）
         "policy_status": policy_status,
         "status_warning": status_warning,
         "where_to_apply": meta.get("where_to_apply"),
@@ -524,14 +529,27 @@ def _run_fault_injection() -> int:
     if not got_b:
         bad += 1
 
-    # ── status_detail：计算类的 UNKNOWN 必须说清是"未实现"还是"缺字段" ──
+    # ── status_detail：计算类的 UNKNOWN 必须说清是"缺字段"还是"引擎算不了" ──
     # ⚠️ 必须**新跑一次**取结果 —— 上面那个 `r` 是"已废止"的调用，reasons 本来就是空的
     r_calc = check_eligibility(profile, conds, policy_meta=doc)
-    calc_reason = next((x for x in r_calc["reasons"] if x.get("is_calc")), None)
-    okd = calc_reason is not None and calc_reason.get("status_detail") == CALC_NOT_IMPLEMENTED
-    print(f"  {'✅' if okd else '🔴'} 计算类 UNKNOWN 带 status_detail       "
-          f"{calc_reason.get('status_detail') if calc_reason else '(无计算类 reason)'}")
+    cr = next((x for x in r_calc["reasons"] if x.get("is_calc")), None)
+    okd = cr is not None and "market_rent" in str(cr.get("status_detail", ""))
+    print(f"  {'✅' if okd else '🔴'} 计算类缺数据 → status_detail 说清缺什么   "
+          f"{cr.get('status_detail') if cr else '(无计算类 reason)'}")
     if not okd:
+        bad += 1
+
+    # ── 补上 market_rent 后：计算类必须变 PASS 且 amount 有值 ──────────
+    # 这是"status_detail 区分两种 UNKNOWN"的**正面证明**：
+    # 数据层问题（缺 market_rent）补上数据就该能判，不该还卡在 UNKNOWN。
+    r_full = check_eligibility({**profile, "market_rent": 3000.0}, conds, policy_meta=doc)
+    cr2 = next((x for x in r_full["reasons"] if x.get("is_calc")), None)
+    okf = (cr2 is not None and cr2["status"] == PASS
+           and r_full["amount"] and r_full["amount"]["value"] > 0)
+    print(f"  {'✅' if okf else '🔴'} 补上 market_rent → 计算类 PASS + amount   "
+          f"status={cr2['status'] if cr2 else '?'} "
+          f"amount={r_full['amount']['value'] if r_full['amount'] else None}")
+    if not okf:
         bad += 1
 
     print()

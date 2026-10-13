@@ -24,8 +24,10 @@
 
 import re
 import time
+from datetime import datetime, timezone
 
 import requests
+from bs4 import BeautifulSoup
 
 # ── 两个主源（2026-09-24 实测确认可用）──────────────────────
 # bgtwj（办公厅文件）排在前：实测它最新（15 条全是 2026），而政策多由办公厅印发
@@ -134,12 +136,20 @@ def fetch_html(url: str, timeout: int = 30) -> str:
     resp.encoding = "utf-8"
     html = resp.text
 
-    # ── 软 404 检查 ────────────────────────────────────────
-    # 实测踩过的坑：失效地址返回的不是 404，而是一段 JS 跳转代码（82 字符）。
-    # 程序不报错，静默拿到无意义内容。所以这里主动检查。
-    if len(html) < 1000:
+    # ── 只拦"根本不像网页"的响应 ────────────────────────────
+    # ⚠️ 这**不是**软 404 判据，别把它当成一个。
+    #
+    # 2026-10-04 实测修正：这条原来是 `len(html) < 1000`，注释写着"疑似软 404"——
+    # 但它**一条都拦不住**：市级站的真实失效页有 **190,250 字符**
+    # （站点首页/错误页的完整渲染，比正常页 115,672 还长）。
+    # → **一个永远不会触发的检查，和没有这个检查是同一件事。**
+    #
+    # 保留它的唯一理由：拦 SPEC §2.5 记过的那种「82 字符 JS 跳转页」
+    # （`zcqd/` 的失效方式）。阈值取 500，只拦"根本不像网页"的响应。
+    # 真正的软 404 判据在 `is_soft_404()`，且**只适用于详情页**。
+    if len(html) < 500:
         raise CrawlError(
-            f"内容过短（{len(html)} 字符），疑似软 404 或跳转页：{url}\n"
+            f"响应只有 {len(html)} 字符，不像正常网页：{url}\n"
             f"内容片段：{html.strip()[:150]}"
         )
 
@@ -244,6 +254,219 @@ def crawl_list(source_key: str, pages: int = 1) -> list[dict]:
             time.sleep(REQUEST_DELAY)
 
     return all_records
+
+
+# ══════════════════════════════════════════════════════════════
+# 详情页 · 抓一条政策的完整内容（SPEC §2.1 契约）
+# 全部判据都是 2026-10-04 对 78 号文实测标定的
+# ══════════════════════════════════════════════════════════════
+
+# 站点名。失效页的 <title> 就是它，不带任何后缀。
+SITE_NAME = "武汉市人民政府门户网站"
+
+# 正常详情页的 <title> 形如：
+#   「市人民政府办公厅关于……的通知 - 武汉市人民政府门户网站」
+# 失效页形如：「武汉市人民政府门户网站」
+SITE_TITLE_SUFFIX = f" - {SITE_NAME}"
+
+# 正文容器类名。⚠️ **只存在于市级站**，换站点必须重新标定。
+DETAIL_CONTAINER = "TRS_Editor"
+
+# 元数据块。先切出 articleInfo 再匹配，是因为整页有几百个 <li>
+# （导航、相关链接），全局匹配会抓到无关条目。
+INFO_BLOCK_PATTERN = re.compile(r'class="articleInfo">(.*?)</ul>', re.S)
+INFO_ITEM_PATTERN = re.compile(r"<li>\s*([^：<]{2,12})：\s*([^<]*?)\s*</li>", re.S)
+
+TITLE_PATTERN = re.compile(r"<title>(.*?)</title>", re.S | re.I)
+
+
+def _extract_title(html: str) -> str:
+    """抽出 <title> 原文（**不**去后缀，判软 404 需要原始值）。"""
+    m = TITLE_PATTERN.search(html)
+    return m.group(1).strip() if m else ""
+
+
+def _strip_site_suffix(title: str) -> str:
+    """去掉标题尾部的「 - 武汉市人民政府门户网站」。
+
+    为什么必须剥：实测所有正常详情页都带这个后缀，不剥的话写进
+    `policies.jsonl` 的 title 会变成「……通知 - 武汉市人民政府门户网站」，
+    和列表页抓到的标题对不上，后续按标题去重/比对全部失效。
+    """
+    if title.endswith(SITE_TITLE_SUFFIX):
+        return title[: -len(SITE_TITLE_SUFFIX)].strip()
+    return title.strip()
+
+
+def is_soft_404(html: str, url: str) -> str | None:
+    """判断详情页是不是「软 404」—— HTTP 200，但页面其实不存在。
+
+    返回：
+        None   正常页
+        str    失效原因（可直接拿去报错）
+
+    为什么必须专门判：失效地址返回 **HTTP 200 + 一整页内容**，
+    requests 不报错、`raise_for_status()` 也不报错。不判就会静默拿到垃圾。
+
+    ⚠️ 三条边界，全部是 2026-10-04 实测标定的，**换条件就会失效**：
+
+    1. **只适用于详情页。** 列表页的容器计数天然是 0
+       （实测 `zcwd` 列表页 `TRS_Editor` 0 次），拿这条判列表页
+       会把正常页全判成失效 → 假警报。
+
+    2. **只适用于市级站 `wuhan.gov.cn`。** 实测 `hanyang.gov.cn`
+       的 `TRS_Editor` 是 0 次，且它的失效页返回**真 HTTP 404**；
+       `rsj.wuhan.gov.cn` 用别的容器类名。**换站点必须重新标定。**
+
+    3. **绝对不要用长度判断。** 实测失效页 **190,250 字符**，
+       比正常页（115,672）**还长**——它是站点首页/错误页的完整渲染，
+       页眉页脚导航一样不少。**所有长度阈值在这个站上都无效。**
+    """
+    title = _extract_title(html)
+
+    # 判据 1（最硬，布尔无阈值）：title 退化成纯站点名
+    if title.strip() == SITE_NAME:
+        return f"页面不存在（title 退化成站点名）：{url}"
+
+    # 判据 2：title 里没有「 - 」分隔符。
+    # 留这条是为了容忍站点改名 —— 那时判据 1 会失效，这条还成立。
+    if " - " not in title:
+        return f"页面不存在（title 无站点后缀）：{url}"
+
+    # 判据 3：没有正文容器（布尔，无阈值）
+    if html.count(DETAIL_CONTAINER) == 0:
+        return f"页面不存在（无正文容器 {DETAIL_CONTAINER}）：{url}"
+
+    return None
+
+
+def _extract_meta(html: str) -> dict[str, str]:
+    """抽「索引号 / 发文机构 / 发文字号 / 成文日期」元数据块。
+
+    返回**原始字符串**，不做格式转换、不编造；抽不到就是空串。
+    """
+    m = INFO_BLOCK_PATTERN.search(html)
+    if not m:
+        return {}
+    return {k.strip(): v.strip() for k, v in INFO_ITEM_PATTERN.findall(m.group(1))}
+
+
+def _to_iso_date(raw: str) -> str:
+    """把「2022年06月07日」转成「2022-06-07」；转不了返回空串。
+
+    为什么失败要返回空串而不是编一个日期：
+        SPEC §2.1 明确写「缺失填 `""`」—— 实测约 1/4 页面无可靠日期。
+        **不允许为了填满字段而编造日期。**
+    """
+    m = re.fullmatch(r"(\d{4})年(\d{1,2})月(\d{1,2})日", raw.strip())
+    if not m:
+        return ""
+    return f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+
+
+def _extract_body_text(html: str) -> str:
+    """抽出正文纯文本。
+
+    ⚠️ **临时实现**。SPEC §4 把正式清洗放在 `src/ingest/clean.py`（模块 3），
+    到那一轮会把本函数移过去，并补上页眉页脚剔除、模板族识别。
+    现在必须先能拿到正文，因为 SPEC §2.1 要求 `content` 必填。
+
+    为什么用 BeautifulSoup 而不是正则找 </div>：
+        正文容器里面嵌了多层 div，正则配非贪婪会提前截断。
+    """
+    soup = BeautifulSoup(html, "lxml")
+    box = soup.find("div", class_=DETAIL_CONTAINER)
+    if box is None:
+        return ""
+
+    # TRS_Editor 的第一个子元素是 <style>，不去掉的话正文里会混进一大段 CSS
+    for tag in box(["style", "script"]):
+        tag.decompose()
+
+    text = box.get_text(separator="\n")
+    lines = [ln.strip() for ln in text.split("\n")]
+    return "\n".join(ln for ln in lines if ln)
+
+
+def _doc_id_from_url(url: str) -> str:
+    """从详情页 URL 末段取 doc_id。
+
+    实测形态：`.../202206/t20220608_1983869.shtml` → `t20220608_1983869`
+    """
+    tail = url.rstrip("/").rsplit("/", 1)[-1]
+    return tail[: -len(".shtml")] if tail.endswith(".shtml") else tail
+
+
+def _detect_template_family(html: str) -> str:
+    """识别模板族（SPEC §3.3）。
+
+    ⚠️ **占位实现，恒返回 "G"**。SPEC §5 规定「无法判定返回 G」，
+    所以这不是编造，是规范允许的降级值。
+
+    为什么现在不做真实现：
+        §3.3 的 A~G 是从 **33 个区级页面**归纳出来的，而本函数当前要处理的是
+        **市级红头文件** —— 它不在这套分类里。
+        （2026-10-04 wb 实测：78 号文的「受理 / 申报对象 / 申请材料」全部 0 次，
+         它压根没有七段式。）
+        真正该先决定的是「**这套分类要不要扩一类『市级红头文件』**」——
+        那是 SPEC 层面的决定，不该由代码顺手定了。
+    """
+    return "G"
+
+
+def crawl_detail(url: str) -> dict:
+    """抓一个政策详情页，返回 SPEC §2.1 契约的全部字段。
+
+    参数：
+        url: 详情页完整地址
+
+    返回：
+        §2.1 契约 dict
+
+    抛出：
+        CrawlError: 网络失败 / HTTP 非 200 / 软 404 / 抽不到正文
+
+    为什么失败要抛异常而不是返回空 dict：
+        返回空 dict 的调用方会把它当成"这条政策没有内容"存进库，
+        **错误就此静默固化**。宁可让程序崩掉。
+    """
+    html = fetch_html(url)
+
+    # 软 404 只在详情页判 —— 边界见 is_soft_404 的说明
+    reason = is_soft_404(html, url)
+    if reason:
+        raise CrawlError(reason)
+
+    body = _extract_body_text(html)
+    # 抽不到正文 = 页面结构变了。必须报错，不能存一条空 content 进库。
+    if not body:
+        raise CrawlError(
+            f"抽不到正文（容器 {DETAIL_CONTAINER} 里是空的）：{url}\n"
+            f"多半是页面改版了，请人工看一眼。"
+        )
+
+    meta = _extract_meta(html)
+    now = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+    return {
+        "doc_id": _doc_id_from_url(url),
+        "url": url,
+        "title": _strip_site_suffix(_extract_title(html)),
+        "doc_number": meta.get("发文字号", ""),
+        "publish_date": _to_iso_date(meta.get("成文日期", "")),
+        "region": "市级",
+        "template_family": _detect_template_family(html),
+        "content": body,
+        "crawled_at": now,
+        # ── 政策有效性（SPEC §2.1 / §3.5b）────────────────────
+        # 默认填「未核实」，**不编造**。有效性核实是独立流程，
+        # 不能由爬虫顺手填「现行」—— 那等于把"没查过"伪装成"查过了"。
+        "policy_status": "未核实",
+        "status_verified_at": now,
+        "status_evidence": "",
+        "superseded_by": None,
+        "source_role": "content",
+    }
 
 
 if __name__ == "__main__":

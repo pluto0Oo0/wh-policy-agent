@@ -133,7 +133,7 @@ GOLDEN_PATH = PROJECT_ROOT / "eval" / "golden_conditions.jsonl"
 #   2026-10-13 实测踩过 —— 断言里写死 `!= 9`，golden set 从 9 条涨到 13 条后
 #   验收直接失败，**而失败原因是"断言过期"，不是"数据错了"**。
 #   写成一个有名字的常量，下次改数据时至少会看到它、需要主动改它。
-EXPECTED_CONDITION_COUNT = 13
+EXPECTED_CONDITION_COUNT = 11
 
 # ══════════════════════════════════════════════════════════════
 # 取值域交集检测（2026-10-13 新增，wb 建议的"强检测"）
@@ -165,10 +165,10 @@ FIELD_DOMAINS: dict[str, object] = {
     "social_insurance_active": {True, False},
     "marital_status": {"未婚", "已婚"},
     "market_rent": (0.0, 100000.0),
-    # 以下字段是 2026-10-13 新增条件引入的，画像里**还没有**（已记为待定项）
-    "has_dependents": {True, False},
+    # 资格有效期（`_11`）。⚠️ 它是**外部依赖型条件** ——
+    # 既不是画像静态属性，也不是引擎能算出的中间状态，
+    # 永远需要用户自报或查外部系统。本期标 UNKNOWN + 追问。
     "qualification_valid": {True, False},
-    "wants_short_stay": {True, False},
 }
 
 

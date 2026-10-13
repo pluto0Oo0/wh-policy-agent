@@ -84,6 +84,21 @@ class Condition:
     formula: str | None = None
     ambiguity: str | None = None
 
+    # ── 豁免条件（2026-10-13 新增，SPEC §2.2 的字段扩展）────────
+    # 形如 `{"field": "education", "op": "in", "value": ["硕士", "博士"]}`，
+    # 语义：**这个子条件对画像成立时，本条条件跳过（视为满足）**。
+    #
+    # 为什么必须有它：78 号文原文「年龄不满45周岁（**研究生不受年龄限制**）」——
+    #   `age < 45` 这一条**对研究生不适用**，但 SPEC §2.2 原契约里
+    #   没有任何字段能表达"某个子条件成立时本条豁免"。
+    #
+    # 为什么不用 `ambiguity` 代替：ambiguity 的语义是"这条判不了"→ UNKNOWN，
+    #   而豁免的语义是"这条对他成立"→ PASS。**两者结果完全相反。**
+    #
+    # 为什么不用 `applies_to_cohort` 代替：cohort 表达的是 grandfathering 时间轨道
+    #   （老政策/新政策），豁免表达的是学历分层。**混用会让 cohort 变成万能字段。**
+    exempt_when: dict | None = None
+
     # ── 核对留痕（D17：AI 起草 + 所有者蜜罐核对）────────────────
     # 为什么这三条要进数据模型、而不是记在别的地方：
     #   SPEC §6 Phase 2 要用 golden set 当 ground truth 去评 LLM 抽取。
@@ -131,6 +146,25 @@ class Condition:
             self.warnings.append(
                 f"{self.cond_id}: cond_type={self.cond_type} 却给了 formula，是否标错类型？"
             )
+
+        # ── exempt_when 的格式校验 ───────────────────────────────
+        # 为什么在构造时就校验：豁免条件写错了（少个 key、op 拼错）
+        # **不会报错，只会让豁免静默失效** —— 50 岁的博士又会被判 FAIL，
+        # 而输出看起来完全正常。这类"少判了豁免"正是最难发现的。
+        if self.exempt_when is not None:
+            if not isinstance(self.exempt_when, dict):
+                raise ConditionError(f"{self.cond_id}: exempt_when 必须是 dict 或 null")
+            lack = {"field", "op", "value"} - set(self.exempt_when)
+            if lack:
+                raise ConditionError(
+                    f"{self.cond_id}: exempt_when 缺字段 {sorted(lack)}"
+                    f"（需要 field / op / value 三个）"
+                )
+            if self.exempt_when["op"] not in OPS:
+                raise ConditionError(
+                    f"{self.cond_id}: exempt_when 的 op={self.exempt_when['op']!r} 不合法，"
+                    f"可选 {OPS}"
+                )
 
     @property
     def is_ambiguous(self) -> bool:

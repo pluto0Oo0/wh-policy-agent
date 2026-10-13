@@ -113,35 +113,74 @@ def _compare(left, op: str, right) -> bool:
     raise EligibilityError(f"不支持的 op：{op!r}")
 
 
-def _eval_condition(profile: dict, cond: Condition) -> tuple[str, str | None]:
+def _matches(profile: dict, expr: dict) -> bool | None:
+    """判断一个"条件表达式"（dict 形如 `{"field","op","value"}`）对画像是否成立。
+
+    返回：
+        True / False  能判定
+        None          **判不了**（字段缺失或格式不支持）—— 调用方决定怎么处理
+
+    为什么要单独抽出来：`exempt_when` 是一段**内嵌的子条件**，
+    它的求值逻辑和主条件一样，但**处置不同**（主条件判 PASS/FAIL，
+    子条件判"要不要豁免"）。抽出来避免两处实现漂移。
+    """
+    field, op, value = expr.get("field"), expr.get("op"), expr.get("value")
+    if op == "exists":
+        return field in profile and profile[field] not in (None, "")
+    if field not in profile or profile[field] is None:
+        return None  # 判不了，不是 False —— 这个区别决定要不要追问用户
+    try:
+        return _compare(profile[field], op, value)
+    except EligibilityError:
+        return None
+
+
+def _eval_condition(profile: dict, cond: Condition) -> tuple[str, str | None, bool]:
     """判定单条条件。
 
     返回：
-        (状态, 缺失字段名或 None)
+        (状态, 缺失字段名或 None, 是否走了豁免)
 
     判定顺序（**顺序本身是设计**）：
         1. cohort 不适用 → N/A（**先分流，再判内容**）
-        2. 有 ambiguity  → UNKNOWN（模糊表述判不了，不许硬答）
-        3. 画像缺字段    → UNKNOWN + 记下缺哪个
-        4. 正常比较      → PASS / FAIL
+        2. 豁免条件成立  → PASS + 标记 exempted
+        3. 有 ambiguity  → UNKNOWN（模糊表述判不了，不许硬答）
+        4. 画像缺字段    → UNKNOWN + 记下缺哪个
+        5. 正常比较      → PASS / FAIL
     """
     # ── 1. 轨道分流 ─────────────────────────────────────────
     try:
         if not resolve_cohort(profile, cond):
-            return NOT_APPLICABLE, None
+            return NOT_APPLICABLE, None, False
     except CohortError as e:
         # 缺分界字段 → 判不了轨道 → UNKNOWN，并把缺的字段报出来
         if "first_insurance_date" in str(e):
-            return UNKNOWN, "first_insurance_date"
+            return UNKNOWN, "first_insurance_date", False
         raise
 
-    # ── 2. 模糊表述 ─────────────────────────────────────────
+    # ── 2. 豁免条件（exempt_when）─────────────────────────────
+    # 语义：子条件对画像成立 → **本条视为满足（PASS）**，不是 UNKNOWN、更不是 N/A。
+    #
+    # 78 号文的例子：「年龄不满45周岁（研究生不受年龄限制）」
+    #   → 50 岁的博士，`_01` 应该判 **PASS**（他被豁免了，满足落户条件）。
+    #   → 判 FAIL 是错的（他会以为自己不能落户）；
+    #     判 UNKNOWN 也是错的（问他什么？他的学历已经告诉我们答案了）。
+    #
+    # ⚠️ 顺序必须在 ambiguity 之前：豁免成立时，本条的模糊性已无关紧要。
+    if cond.exempt_when:
+        hit = _matches(profile, cond.exempt_when)
+        if hit is True:
+            return PASS, None, True
+        # hit 为 None（判不了）时**不阻断**，继续往下走正常判定 ——
+        # 让下面的"缺字段"分支去报 UNKNOWN 并追问，处置点仍然只有一个。
+
+    # ── 3. 模糊表述 ─────────────────────────────────────────
     # SPEC §3.5：ambiguity 非 null 时**判定必须返回 UNKNOWN**，不许硬给答案。
     # 约 30% 的条件含模糊/需裁量表述（调研报告 §5.2 实测）。
     if cond.is_ambiguous:
-        return UNKNOWN, None
+        return UNKNOWN, None, False
 
-    # ── 3. 画像字段 ─────────────────────────────────────────
+    # ── 4. 画像字段 ─────────────────────────────────────────
     if cond.op == "exists":
         # ⚠️ 「字段不存在」≠「值为 False」—— 这是 UNKNOWN，不是 FAIL。
         #
@@ -153,15 +192,15 @@ def _eval_condition(profile: dict, cond: Condition) -> tuple[str, str | None]:
         # 这和本模块开头写的「UNKNOWN 不是 INELIGIBLE」是同一条原则 ——
         # 我把它写进了注释，却在 exists 分支上违反了它。
         if cond.field not in profile:
-            return UNKNOWN, cond.field
+            return UNKNOWN, cond.field, False
         value = profile[cond.field]
-        return (PASS if value not in (None, "") else FAIL), None
+        return (PASS if value not in (None, "") else FAIL), None, False
 
     if cond.field not in profile or profile[cond.field] is None:
-        return UNKNOWN, cond.field
+        return UNKNOWN, cond.field, False
 
-    # ── 4. 比较 ─────────────────────────────────────────────
-    return (PASS if _compare(profile[cond.field], cond.op, cond.value) else FAIL), None
+    # ── 5. 比较 ─────────────────────────────────────────────
+    return (PASS if _compare(profile[cond.field], cond.op, cond.value) else FAIL), None, False
 
 
 def check_eligibility(
@@ -252,10 +291,16 @@ def check_eligibility(
             )
             continue
 
-        status, missing_field = _eval_condition(profile, cond)
-        reasons.append(
-            {"cond_id": cond.cond_id, "status": status, "source_text": cond.source_text}
-        )
+        status, missing_field, exempted = _eval_condition(profile, cond)
+        reason = {"cond_id": cond.cond_id, "status": status, "source_text": cond.source_text}
+        if exempted:
+            # 为什么必须记下"豁免了什么"：
+            #   用户看到「年龄不满45周岁 → PASS」会困惑（他 50 岁）。
+            #   **只给结论不给理由，等于让他怀疑系统算错了。**
+            #   带上 exempted_by，输出就能说清"因研究生学历豁免"。
+            reason["exempted"] = True
+            reason["exempted_by"] = cond.exempt_when
+        reasons.append(reason)
         if missing_field and missing_field not in missing:
             missing.append(missing_field)
 
@@ -417,6 +462,30 @@ def _run_fault_injection() -> int:
     print(f"  {'✅' if ok3 else '🔴'} 全 UNKNOWN → verdict=UNKNOWN     verdict={r3['verdict']} "
           f"缺={r3['missing_fields']}")
     if not ok3:
+        bad += 1
+
+    # ── exempt_when（豁免）：50 岁博士必须 PASS，50 岁本科必须 FAIL ──────
+    # 为什么这条必须测：豁免写错**不会报错，只会静默失效** ——
+    # 50 岁的博士又会被判 FAIL，而输出看起来完全正常。
+    base = {"education_type": "全日制", "grad_year": 2024, "first_insurance_date": "2023-01-01",
+            "housing_owned_in_wuhan": False, "social_insurance_active": True,
+            "qualification_valid": True, "age": 50}
+    c01 = next(c for c in conds if c.cond_id.endswith("_01"))
+    for edu, want in (("博士", "PASS"), ("本科", "FAIL")):
+        rr = check_eligibility({**base, "education": edu}, [c01], policy_meta=doc, as_of_year=2026)
+        got = rr["reasons"][0]["status"]
+        oke = got == want
+        if not oke:
+            bad += 1
+        mark = "✅" if oke else "🔴"
+        print(f"  {mark} exempt_when：50 岁{edu} → {want}              实际={got}")
+
+    # 豁免必须**说清理由**，不能只给结论（否则用户看到"年龄 PASS"会以为算错了）
+    rr = check_eligibility({**base, "education": "博士"}, [c01], policy_meta=doc, as_of_year=2026)
+    oke = rr["reasons"][0].get("exempted") is True and rr["reasons"][0].get("exempted_by")
+    print(f"  {'✅' if oke else '🔴'} 豁免理由被记录                      "
+          f"exempted_by={rr['reasons'][0].get('exempted_by')}")
+    if not oke:
         bad += 1
 
     print()

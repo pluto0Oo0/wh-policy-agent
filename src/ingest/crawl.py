@@ -27,7 +27,8 @@ import time
 from datetime import datetime, timezone
 
 import requests
-from bs4 import BeautifulSoup
+
+from .clean import CONTENT_CONTAINERS, clean_text, detect_template_family
 
 # ── 两个主源（2026-09-24 实测确认可用）──────────────────────
 # bgtwj（办公厅文件）排在前：实测它最新（15 条全是 2026），而政策多由办公厅印发
@@ -364,30 +365,6 @@ def _to_iso_date(raw: str) -> str:
     return f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
 
 
-def _extract_body_text(html: str) -> str:
-    """抽出正文纯文本。
-
-    ⚠️ **临时实现**。SPEC §4 把正式清洗放在 `src/ingest/clean.py`（模块 3），
-    到那一轮会把本函数移过去，并补上页眉页脚剔除、模板族识别。
-    现在必须先能拿到正文，因为 SPEC §2.1 要求 `content` 必填。
-
-    为什么用 BeautifulSoup 而不是正则找 </div>：
-        正文容器里面嵌了多层 div，正则配非贪婪会提前截断。
-    """
-    soup = BeautifulSoup(html, "lxml")
-    box = soup.find("div", class_=DETAIL_CONTAINER)
-    if box is None:
-        return ""
-
-    # TRS_Editor 的第一个子元素是 <style>，不去掉的话正文里会混进一大段 CSS
-    for tag in box(["style", "script"]):
-        tag.decompose()
-
-    text = box.get_text(separator="\n")
-    lines = [ln.strip() for ln in text.split("\n")]
-    return "\n".join(ln for ln in lines if ln)
-
-
 def _doc_id_from_url(url: str) -> str:
     """从详情页 URL 末段取 doc_id。
 
@@ -395,23 +372,6 @@ def _doc_id_from_url(url: str) -> str:
     """
     tail = url.rstrip("/").rsplit("/", 1)[-1]
     return tail[: -len(".shtml")] if tail.endswith(".shtml") else tail
-
-
-def _detect_template_family(html: str) -> str:
-    """识别模板族（SPEC §3.3）。
-
-    ⚠️ **占位实现，恒返回 "G"**。SPEC §5 规定「无法判定返回 G」，
-    所以这不是编造，是规范允许的降级值。
-
-    为什么现在不做真实现：
-        §3.3 的 A~G 是从 **33 个区级页面**归纳出来的，而本函数当前要处理的是
-        **市级红头文件** —— 它不在这套分类里。
-        （2026-10-04 wb 实测：78 号文的「受理 / 申报对象 / 申请材料」全部 0 次，
-         它压根没有七段式。）
-        真正该先决定的是「**这套分类要不要扩一类『市级红头文件』**」——
-        那是 SPEC 层面的决定，不该由代码顺手定了。
-    """
-    return "G"
 
 
 def crawl_detail(url: str) -> dict:
@@ -437,12 +397,13 @@ def crawl_detail(url: str) -> dict:
     if reason:
         raise CrawlError(reason)
 
-    body = _extract_body_text(html)
-    # 抽不到正文 = 页面结构变了。必须报错，不能存一条空 content 进库。
+    body = clean_text(html)
+    # 抽不到正文 = 页面结构变了（或换了站点、容器类名不同）。
+    # 必须报错，不能存一条空 content 进库 —— 那会把错误静默固化。
     if not body:
         raise CrawlError(
-            f"抽不到正文（容器 {DETAIL_CONTAINER} 里是空的）：{url}\n"
-            f"多半是页面改版了，请人工看一眼。"
+            f"抽不到正文（已知容器 {CONTENT_CONTAINERS} 里都没有内容）：{url}\n"
+            f"多半是页面改版了、或这是没标定过容器的站点，请人工看一眼。"
         )
 
     meta = _extract_meta(html)
@@ -455,7 +416,7 @@ def crawl_detail(url: str) -> dict:
         "doc_number": meta.get("发文字号", ""),
         "publish_date": _to_iso_date(meta.get("成文日期", "")),
         "region": "市级",
-        "template_family": _detect_template_family(html),
+        "template_family": detect_template_family(html),
         "content": body,
         "crawled_at": now,
         # ── 政策有效性（SPEC §2.1 / §3.5b）────────────────────

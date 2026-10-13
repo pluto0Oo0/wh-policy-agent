@@ -30,7 +30,7 @@ SPEC §5 签名（不得改名）：
 但**只要有一条 UNKNOWN 且没有 FAIL，整体就是 UNKNOWN**，不许硬给 ELIGIBLE。
 """
 
-from src.conditions.model import Condition
+from src.conditions.model import CALC_TYPE, Condition
 from src.engine.cohort import CohortError, resolve_cohort
 
 # ── 单条条件的判定结果 ──────────────────────────────────────
@@ -226,9 +226,32 @@ def check_eligibility(
     missing: list[str] = []
 
     for cond in conditions:
-        if cond.cond_type not in ELIGIBILITY_TYPES:
-            # 计算类不参与资格判定（它产出金额，由 calc.py 处理）
+        if cond.cond_type == CALC_TYPE:
+            # ── 计算类也要进 reasons ────────────────────────────────
+            # 🔴 2026-10-13 由 wb 指出：我原来在这里 `continue` 直接跳过了计算类，
+            #    于是 `_09`（六重叠加，全项目最复杂的一条）**在输出里彻底消失**——
+            #    reasons 只有 12 条 / 条件 13 条，没人看得出来少了一条。
+            #
+            #    为什么这是 bug：SPEC §2.4 写着 `reasons` 是「**逐条**条件的结果」。
+            #    跳过 = 违反了契约，而且**症状是"少了东西"而不是"报错"**。
+            #
+            #    它什么时候能有确定状态：`calc.py`（纵切第 9 步）实现后，
+            #    由它算 amount，这里再据"算得出/算不出"定 PASS/UNKNOWN。
+            #    在那之前一律 UNKNOWN —— 这是诚实的，不是占位。
+            status, missing_field = UNKNOWN, None
+            reasons.append(
+                {
+                    "cond_id": cond.cond_id,
+                    "status": status,
+                    "source_text": cond.source_text,
+                    # 为什么单独标出来：它和其他条件的**产出语义不同**
+                    # （资格类产 PASS/FAIL，计算类产 amount），
+                    # 混在同一个 status 里会让人以为"它也是个资格条件"。
+                    "is_calc": True,
+                }
+            )
             continue
+
         status, missing_field = _eval_condition(profile, cond)
         reasons.append(
             {"cond_id": cond.cond_id, "status": status, "source_text": cond.source_text}
@@ -300,6 +323,20 @@ def _run_acceptance() -> int:
         print(f"  {x['cond_id'][-2:]}  {x['status']:<8} {x['source_text'][:34]}")
 
     failures: list[str] = []
+    # 断言 0：**每条条件都必须出现在 reasons 里**。
+    #
+    # 🔴 这条断言是 2026-10-13 补的，由 wb 指出 `_09` 漏报而引出。
+    #    原来没有它，于是计算类被 `continue` 跳过后 **reasons 只有 12 条 / 条件 13 条**，
+    #    而**没有任何东西会报警** —— 输出看起来完全正常，只是少了一条。
+    #
+    #    为什么用"逐条比对 cond_id"而不是"数条数"：
+    #      数条数只能发现"少了"，不能发现"少了哪一条"。
+    #      逐条比对能直接报出缺失的 cond_id，**报错信息本身就可行动**。
+    reason_ids = {x["cond_id"] for x in r["reasons"]}
+    missing_ids = [c.cond_id for c in conds if c.cond_id not in reason_ids]
+    if missing_ids:
+        failures.append(f"断言0：这些条件没进 reasons —— {missing_ids}")
+
     # 断言 1：reasons 每条都带 source_text（SPEC §2.4 硬要求）
     if not all(x["source_text"] for x in r["reasons"]):
         failures.append("断言1：有 reason 缺 source_text")
@@ -318,6 +355,7 @@ def _run_acceptance() -> int:
         for f in failures:
             print(f"  ❌ {f}")
         return 1
+    print(f"  ✅ 断言0：{len(conds)} 条条件全部出现在 reasons 里")
     print("  ✅ 断言1：每条 reason 都带 source_text")
     print("  ✅ 断言2：未核实状态带 status_warning")
     print("  ✅ 断言3：verdict 合法")

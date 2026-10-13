@@ -235,12 +235,29 @@ def _run_acceptance() -> int:
 
     failures: list[str] = []
 
-    # 断言 1：78 号文的 13 条都在
+    # 断言 1（**语义特征**）：检查"该有的东西在不在"，**不检查具体条数**。
+    #
+    # 2026-10-13 由 wb 指出：我原来把 `!= 9` 改成具名常量 `EXPECTED_CONDITION_COUNT`，
+    # 那是「**换皮没换骨**」—— 常量仍然是写死的数字，改数据时照样会过期，
+    # 只是过期时更容易被发现而已。**而我自己的教训恰恰是"不要写死条数"。**
+    #
+    # 真正的修法：检查语义特征。它们**不随编号和条数变化**，因此不会过期。
+    if not any(c.cond_type == "计算" for c in conds):
+        failures.append("断言1a：一条计算类都没有（六重叠加没标进来）")
+    if not any(c.cond_type == "时序互斥" for c in conds):
+        failures.append("断言1b：一条时序互斥都没有（grandfathering 分界条件）")
+    if not any("老政策" in c.applies_to_cohort for c in conds):
+        failures.append("断言1c：缺老政策通道的 cohort（双轨的另一半）")
+    if not any(c.is_ambiguous for c in conds):
+        failures.append("断言1d：一条 ambiguity 都没有（SPEC §3.5 说约 30% 条件含模糊表述）")
+    # 条数下限兜底：防"加载到 0 条 / 极少条"这种极端情况
+    if len(conds) < 5:
+        failures.append(f"断言1e：只加载到 {len(conds)} 条，疑似加载不完整")
+
+    # 具名常量保留为**可见提醒**（不是断言）：过期时至少能看到它，需要主动改
     if len(conds) != EXPECTED_CONDITION_COUNT:
-        failures.append(
-            f"断言1：期望 {EXPECTED_CONDITION_COUNT} 条，实得 {len(conds)} 条"
-            f"（若 golden set 确实改了，请同步改 EXPECTED_CONDITION_COUNT）"
-        )
+        print(f"  ⚠️  条数 {len(conds)} 与 EXPECTED_CONDITION_COUNT="
+              f"{EXPECTED_CONDITION_COUNT} 不符 —— 不是失败，是提醒你该更新那个常量了")
 
     # 断言 2：cond_id 唯一（重复会让 reason 列表对不上号）
     ids = [c.cond_id for c in conds]
@@ -273,7 +290,7 @@ def _run_acceptance() -> int:
         print(f"\n❌ 未通过，{len(failures)} 个问题")
         return 1
 
-    print("  ✅ 断言1：9 条齐全")
+    print(f"  ✅ 断言1（语义特征）：计算类/时序互斥/老政策通道/ambiguity 都在")
     print("  ✅ 断言2：cond_id 唯一")
     print(f"  ✅ 断言3：计算类 {len(calc)} 条且都有 formula")
     print(f"  ✅ 断言4：含老政策通道（cohort 共 {len(cohorts)} 种）")

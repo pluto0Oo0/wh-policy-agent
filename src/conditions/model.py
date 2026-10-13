@@ -166,6 +166,30 @@ class Condition:
                     f"可选 {OPS}"
                 )
 
+        # ── exempt_when 与 ambiguity **互斥**（2026-10-13 由 wb 指出，所有者已批）──
+        #
+        # 为什么互斥：两者语义重叠且**处置相反**——
+        #   exempt_when 是**结构化豁免**（引擎能判 → PASS）
+        #   ambiguity  是**模糊表述**（引擎判不了 → UNKNOWN）
+        # 同一条条件不可能既"能结构化豁免"又"判不了"。
+        #
+        # 为什么必须**报错**而不是警告：
+        #   两个字段表达同一件事 = 冗余 = **改一个忘改另一个 = 静默失效**。
+        #   实测来源：`_01` 原来的 `ambiguity` 就是"研究生不受年龄限制"，
+        #   加了 `exempt_when` 后两者表达同一件事 —— 如果只警告，
+        #   将来有人改了 `exempt_when` 忘了删 `ambiguity`，引擎会去判 UNKNOWN，
+        #   而输出看起来完全正常。
+        #
+        # ⚠️ 如果 `ambiguity` 只是想保留"原文里的模糊表述"作为**追溯证据**，
+        #   那该用 `source_text`，不该用 `ambiguity` —— 后者的语义是"引擎判不了"。
+        if self.exempt_when is not None and self.ambiguity is not None:
+            raise ConditionError(
+                f"{self.cond_id}: exempt_when 和 ambiguity 不能同时有值 —— 语义重叠。\n"
+                f"  exempt_when={self.exempt_when!r}  → 引擎能判（PASS）\n"
+                f"  ambiguity={self.ambiguity!r}      → 引擎判不了（UNKNOWN）\n"
+                f"  同一条不可能两者皆是。若只是想留追溯证据，请用 source_text。"
+            )
+
     @property
     def is_ambiguous(self) -> bool:
         """含模糊表述的条件。

@@ -30,7 +30,7 @@ SPEC §5 签名（不得改名）：
 但**只要有一条 UNKNOWN 且没有 FAIL，整体就是 UNKNOWN**，不许硬给 ELIGIBLE。
 """
 
-from src.conditions.model import CALC_TYPE, Condition
+from src.conditions.model import CALC_TYPE, Condition, ConditionError
 from src.engine.cohort import CohortError, resolve_cohort
 
 # ── 单条条件的判定结果 ──────────────────────────────────────
@@ -52,6 +52,11 @@ STATUS_UNVERIFIED = "未核实"
 
 # 参与"资格判定"的条件类型。计算类不参与 —— 它产出的是金额，不是资格。
 ELIGIBILITY_TYPES = ("资格", "时序互斥", "材料")
+
+# `status_detail` 的两个取值（2026-10-13 新增，区分两种 UNKNOWN 的来源）
+# 为什么是常量而不是散在代码里：CLI 要按它决定给用户看什么话，
+# 两边各写一遍字符串就会漂移。
+CALC_NOT_IMPLEMENTED = "calc 未实现（calc.py 是纵切第 9 步，尚未编写）"
 
 
 class EligibilityError(ValueError):
@@ -277,11 +282,25 @@ def check_eligibility(
             #    它什么时候能有确定状态：`calc.py`（纵切第 9 步）实现后，
             #    由它算 amount，这里再据"算得出/算不出"定 PASS/UNKNOWN。
             #    在那之前一律 UNKNOWN —— 这是诚实的，不是占位。
+            # ── status_detail：区分两种完全不同的 UNKNOWN ──────────────
+            # 2026-10-13 由 wb 指出、所有者已批。
+            #
+            #   "calc 未实现"  → **引擎层**问题，**用户补字段没用**
+            #   "缺 <字段>"    → **数据层**问题，用户补了就能判
+            #
+            # 为什么必须区分：不区分的话，一个 UNKNOWN 里混着两种原因，
+            # **输出上看不出来** —— 用户会去补一堆字段，然后发现还是 UNKNOWN，
+            # 却不知道问题不在他那边。**这是"让人做无用功"的错误信息。**
+            #
+            # 什么时候会变成另一种：`calc.py`（纵切第 9 步）实现后，
+            # 它能算出金额 → 这里改成 PASS + amount；
+            # 算不出（如缺 market_rent）→ UNKNOWN + status_detail="缺 market_rent"。
             status, missing_field = UNKNOWN, None
             reasons.append(
                 {
                     "cond_id": cond.cond_id,
                     "status": status,
+                    "status_detail": CALC_NOT_IMPLEMENTED,
                     "source_text": cond.source_text,
                     # 为什么单独标出来：它和其他条件的**产出语义不同**
                     # （资格类产 PASS/FAIL，计算类产 amount），
@@ -486,6 +505,33 @@ def _run_fault_injection() -> int:
     print(f"  {'✅' if oke else '🔴'} 豁免理由被记录                      "
           f"exempted_by={rr['reasons'][0].get('exempted_by')}")
     if not oke:
+        bad += 1
+
+    # ── exempt_when 与 ambiguity 互斥（wb 疑点 B，所有者已批）──────────
+    # 两者表达同一件事时是冗余 → 改一个忘改另一个 = 静默失效。
+    # 实测来源：`_01` 原来的 ambiguity 就是"研究生不受年龄限制"。
+    def _both():
+        Condition(cond_id="t_x", doc_id="d", applies_to_cohort="全体", cond_type="资格",
+                  field="age", op="<", value=45, source_text="年龄不满45周岁（研究生不受年龄限制）",
+                  exempt_when={"field": "education", "op": "in", "value": ["硕士", "博士"]},
+                  ambiguity="研究生不受年龄限制")
+    try:
+        _both()
+        got_b = False
+    except ConditionError:
+        got_b = True
+    print(f"  {'✅' if got_b else '🔴'} exempt_when+ambiguity 并存必须报错   实际={'报错' if got_b else '通过'}")
+    if not got_b:
+        bad += 1
+
+    # ── status_detail：计算类的 UNKNOWN 必须说清是"未实现"还是"缺字段" ──
+    # ⚠️ 必须**新跑一次**取结果 —— 上面那个 `r` 是"已废止"的调用，reasons 本来就是空的
+    r_calc = check_eligibility(profile, conds, policy_meta=doc)
+    calc_reason = next((x for x in r_calc["reasons"] if x.get("is_calc")), None)
+    okd = calc_reason is not None and calc_reason.get("status_detail") == CALC_NOT_IMPLEMENTED
+    print(f"  {'✅' if okd else '🔴'} 计算类 UNKNOWN 带 status_detail       "
+          f"{calc_reason.get('status_detail') if calc_reason else '(无计算类 reason)'}")
+    if not okd:
         bad += 1
 
     print()

@@ -231,8 +231,14 @@ def _eval_condition(profile: dict, cond: Condition) -> tuple[str, str | None, bo
         hit = _matches(profile, cond.exempt_when)
         if hit is True and normal_status != PASS:
             return PASS, None, True
-        # hit 为 None（判不了）时**不阻断**，用正常判定的结果 ——
-        # 让"缺字段"分支去报 UNKNOWN 并追问，处置点仍然只有一个。
+        # hit 为 None（豁免字段缺失）且正常判 FAIL → 之前 fall-through 成 FAIL，
+        # 但真相是"博士则符合、本科则不符合，我们不知道他是哪种"——
+        # 把两种可能压成 FAIL（且压的是坏的那种），违背「UNKNOWN 不是 INELIGIBLE」。
+        # → 改判 UNKNOWN，追问的正是豁免字段（wb 2026-10-13 指出，F2）。
+        if hit is None and normal_status == FAIL:
+            return UNKNOWN, cond.exempt_when["field"], False
+        # hit 为 None 但正常判 PASS/UNKNOWN → 豁免不可能让结果更差，
+        # 保持正常判定的结论；正判 UNKNOWN 的缺失字段由 _eval_normal 已报出。
 
     return normal_status, missing, False
 
@@ -520,13 +526,51 @@ def _run_fault_injection() -> int:
     if not ok2:
         bad += 1
 
-    # UNKNOWN 但**没有 FAIL** 时，整体 verdict 必须是 UNKNOWN（不许硬给 ELIGIBLE）
-    only_unknown = [c for c in conds if c.cond_id.endswith(("_06", "_07"))]
-    r3 = check_eligibility({}, only_unknown, policy_meta=doc)
+    # 画像为空 → 每条都判不了（UNKNOWN），**没有一条 FAIL** 时，
+    # 整体 verdict 必须是 UNKNOWN（不许硬给 ELIGIBLE），且必须告诉用户缺什么。
+    # ⚠️ 用**全部条件 + 空画像**（F4 改法，wb 2026-10-13）：原按 `_06`/`_07` 后缀选
+    #    子集，重编号后静默选错对象；按语义选就该选"最强形态"——什么都不填。
+    r3 = check_eligibility({}, conds, policy_meta=doc)
     ok3 = r3["verdict"] == "UNKNOWN" and r3["missing_fields"]
-    print(f"  {'✅' if ok3 else '🔴'} 全 UNKNOWN → verdict=UNKNOWN     verdict={r3['verdict']} "
+    print(f"  {'✅' if ok3 else '🔴'} 空画像全 UNKNOWN → verdict=UNKNOWN   verdict={r3['verdict']} "
           f"缺={r3['missing_fields']}")
     if not ok3:
+        bad += 1
+
+    # ── 九格真值表 ⑨（SPEC §3.5c，NF-1 补断言，wb 2026-10-19）────────────
+    # 缺分界字段（first_insurance_date）→ 轨道判不了 → 必须是 UNKNOWN + 追问分界字段，
+    # 不许判 FAIL。引擎的实现（捕 CohortError 转 UNKNOWN，L207-211）在这之前**只有实现
+    # 没有断言** —— 九格表标 ✅ 标错了，这就是没测的那格。
+    # ⚠️ 按**语义**选轨道条件（applies_to_cohort 不是"全体"），不按 cond_id 后缀（F4 同源）。
+    #    ⚠️ 二次踩坑更正（本轮自测抓的）：不能再用 `field != "first_insurance_date"`
+    #    过滤——golden 里两条轨道条件的 field **就是**分界字段（它们本身就是
+    #    "以首次社保时点分轨"这条规则），那样过滤会把轨道条件全排掉，
+    #    CohortError 永远不触发，断言测了个空集。
+    track_conds = [c for c in conds if "全体" not in c.applies_to_cohort]
+    assert track_conds, "golden 里必须有轨道条件，否则⑨格测不了（golden 结构变了？）"
+    r9 = check_eligibility({}, track_conds, policy_meta=doc)
+    r9_ids = {x["cond_id"] for x in r9["reasons"]}
+    got9 = {x["cond_id"] for x in r9["reasons"] if x["status"] == UNKNOWN}
+    ok9 = (r9["verdict"] == "UNKNOWN" and r9_ids and r9_ids <= got9
+           and "first_insurance_date" in r9["missing_fields"])
+    print(f"  {'✅' if ok9 else '🔴'} ⑨缺分界字段 → 轨道条件 UNKNOWN+追问分界字段  "
+          f"verdict={r9['verdict']} 分界字段在missing={'first_insurance_date' in r9['missing_fields']}")
+    if not ok9:
+        bad += 1
+
+    # ── 九格真值表 ⑧（SPEC §3.5c，NF-1 补断言，wb 2026-10-19）────────────
+    # cohort 不适用 → N/A，且 **N/A 不许进 verdict**（N/A 不是失败：
+    # 老轨道的人看新政策条件被判"不符合"是把不适用当 FAIL 的典型后果）。
+    # 同样在此之前只有实现没有断言。
+    old_only = [c for c in conds if "老政策通道" in c.applies_to_cohort]
+    assert old_only, "golden 里必须有老轨道条件，否则⑧格测不了（golden 结构变了？）"
+    new_profile = {"first_insurance_date": "2023-01-01"}  # 新轨道画像
+    r8 = check_eligibility(new_profile, old_only, policy_meta=doc, as_of_year=2026)
+    na_cnt = sum(1 for x in r8["reasons"] if x["status"] == NOT_APPLICABLE)
+    ok8 = len(r8["reasons"]) == len(old_only) and na_cnt == len(old_only)
+    print(f"  {'✅' if ok8 else '🔴'} ⑧cohort不适用 → 全部 N/A 不进 verdict  "
+          f"N/A={na_cnt}/{len(old_only)} verdict={r8['verdict']}")
+    if not ok8:
         bad += 1
 
     # ── exempt_when（豁免）：50 岁博士必须 PASS，50 岁本科必须 FAIL ──────
@@ -535,7 +579,9 @@ def _run_fault_injection() -> int:
     base = {"education_type": "全日制", "grad_year": 2024, "first_insurance_date": "2023-01-01",
             "housing_owned_in_wuhan": False, "social_insurance_active": True,
             "qualification_valid": True, "age": 50}
-    c01 = next(c for c in conds if c.cond_id.endswith("_01"))
+    # ⚠️ 按**语义**选（有 exempt_when 且 field=="age"），不按 cond_id 后缀（F4，wb 2026-10-13）：
+    #    `_01` 重编号后按后缀选会静默选错条件（F1 同源），按语义选重编号不会失效。
+    c01 = next(c for c in conds if c.exempt_when is not None and c.field == "age")
     for edu, want in (("博士", "PASS"), ("本科", "FAIL")):
         rr = check_eligibility({**base, "education": edu}, [c01], policy_meta=doc, as_of_year=2026)
         got = rr["reasons"][0]["status"]
@@ -567,6 +613,19 @@ def _run_fault_injection() -> int:
     oke = rr["reasons"][0]["status"] == PASS and "exempted" not in rr["reasons"][0]
     print(f"  {'✅' if oke else '🔴'} 豁免未起作用时**不标**豁免          "
           f"status={rr['reasons'][0]['status']} exempted={rr['reasons'][0].get('exempted')}")
+    if not oke:
+        bad += 1
+
+    # ── F2（wb 2026-10-13）：缺**豁免字段** + 正常 FAIL → UNKNOWN ─────────
+    # 50 岁但没填学历：博士则豁免命中→PASS，本科则不命中→FAIL，
+    # 真相是"不知道他是哪种"。原实现 fall-through 成 FAIL → 整体 INELIGIBLE，
+    # 用户被告知"不符合"，而他只是没填一项信息 —— 违背「UNKNOWN 不是 INELIGIBLE」。
+    # 修后必须 UNKNOWN，且追问的正是豁免字段（education）。
+    no_edu = {k: v for k, v in {**base, "education": "本科"}.items() if k != "education"}
+    rr = check_eligibility(no_edu, [c01], policy_meta=doc, as_of_year=2026)
+    oke = rr["reasons"][0]["status"] == UNKNOWN and "education" in rr["missing_fields"]
+    print(f"  {'✅' if oke else '🔴'} 缺豁免字段+正常FAIL → UNKNOWN+追问豁免字段 "
+          f"status={rr['reasons'][0]['status']} missing={rr['missing_fields']}")
     if not oke:
         bad += 1
 

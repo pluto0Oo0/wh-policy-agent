@@ -31,13 +31,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from checks import config as C  # noqa: E402
 from checks import data_checks as D  # noqa: E402
 from checks.expected_samples import check_expected_samples as _check_samples  # noqa: E402
+from checks.module_tests import check_module_selftests  # noqa: E402
 
 # 四个"可自动判定"的检查 + 两个"只警告"的检查
 AUTO_CHECKS = [
-    ("单文件行数", C.check_file_length),
     ("静默吞错", C.check_silent_except),
     ("显式编码", C.check_encoding),
     ("JSONL 完整性", D.check_jsonl),
+    ("模块自测（全仓）", check_module_selftests),
 ]
 WARN_CHECKS = [
     ("SPEC 签名同步", D.check_spec_signatures),
@@ -78,7 +79,22 @@ def main() -> int:
             C.fail(f"[{name}] 检查本身崩了：{type(e).__name__}: {e}")
         print(f"  已跑 · {name}")
 
+    # ── 行数双口径（单独跑 + 显式声明口径，F3 教训：口径不声明 = 数字失真）──
+    print("  已跑 · 行数（双口径：会话增量=硬红线 / 单文件总量=软预警）")
+    try:
+        C.check_file_length()
+    except Exception as e:
+        C.fail(f"[行数] 检查本身崩了：{type(e).__name__}: {e}")
+
     # ── 汇总 ──────────────────────────────────────────────
+    print()
+    # 🔴 口径声明（F3，wb 2026-10-13）：同一命令在提交前后报的数字不同，
+    #    根子是"检查范围"没声明。这里显式写明每项查的是哪个口径。
+    print("📋 检查范围口径：")
+    print("   · 静默吞错 / 显式编码 —— 本轮 diff（提交后退化为全仓扫描）")
+    print("   · JSONL 完整性 / expected_samples / 数据源 —— 全仓数据文件")
+    print("   · 模块自测 —— 全仓 src/（python -m 逐个跑，非 0 即报）")
+    print("   · 行数 —— 会话增量（硬）+ 单文件总量（软），两个口径分开报")
     print()
     if C.warnings:
         print(f"警告 {len(C.warnings)} 条（不阻断，但必须逐条看过）：")

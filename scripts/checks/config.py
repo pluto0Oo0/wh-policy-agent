@@ -115,14 +115,46 @@ def changed_py_files() -> list[Path]:
 
 
 # ── 1. 单文件行数 ─────────────────────────────────────────────
+# ⚠️ 双口径（F3 失真根因 = 口径不声明，wb 2026-10-13 定性；所有者 2026-10-19 批）：
+#   - **会话增量**（本轮 diff）：硬红线 ≤200 行 —— 衡量"这一次会话写了多少"，所有者当天要能读完
+#   - **单文件总量**：软预警 >200 行 —— 衡量"这个文件还可不可读"，是可读性预警不是违规
+#   两个口径**分开报、分开定性**。原来把总量当 fail 报，提交后 9 个文件 ❌，
+#   而会话增量合规 —— 数字打架的根子就是口径混在一起且不声明。
 def check_file_length() -> None:
-    for p in changed_py_files():
+    changed = changed_py_files()
+    changed_set = {p.resolve() for p in changed}
+
+    # 口径 A：本轮 diff 的**会话增量**（numstat 加减相抵后的净增）→ 硬
+    try:
+        out = subprocess.run(
+            ["git", "diff", "--numstat", "HEAD"],
+            cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=15,
+        )
+        for line in out.stdout.splitlines():
+            parts = line.split("\t")
+            if len(parts) == 3 and parts[2].endswith(".py"):
+                added, deleted = int(parts[0]), int(parts[1])
+                net = added - deleted
+                if net > MAX_FILE_LINES:
+                    fail(
+                        f"[行数·会话增量] {parts[2]} 本次净增 {net} 行，超过 {MAX_FILE_LINES} 硬红线"
+                        f"（CLAUDE.md 第 2 条：单次会话新增代码 ≤200 行）。"
+                        f"超出先拆分会话并说明拆分方案。"
+                    )
+    except Exception:
+        pass  # 取不到 git 时退化为只查总量口径，下面照跑
+
+    # 口径 B：全仓**单文件总量** → 软预警（改自 fail，2026-10-19 所有者批）
+    # 全仓扫（不是只扫 diff）—— 提交后 diff 口径漏检历史遗留（F3 教训），总量口径本来就该全扫
+    all_py = [p for sub in ("src", "scripts") for p in (PROJECT_ROOT / sub).rglob("*.py")
+              if ".venv" not in p.parts and "checks" not in p.parts and p.name != "check_deliver.py"]
+    for p in sorted(set(all_py) | changed_set):
         n = len(p.read_text(encoding="utf-8", errors="replace").splitlines())
         if n > MAX_FILE_LINES:
-            fail(
-                f"[行数] {p.name} 有 {n} 行，超过 {MAX_FILE_LINES} 上限（CLAUDE.md 第 2 条）。"
-                f"超了不报错，但所有者读不过来，审码会变成走过场——"
-                f"这正是项目要避免的头号风险（D11）。"
+            warn(
+                f"[行数·总量] {p.name} 有 {n} 行（> {MAX_FILE_LINES}）。"
+                f"软预警不阻断：会话增量才是硬红线；这条只提示该文件可读性在下降，"
+                f"下次动它时考虑拆分。"
             )
 
 

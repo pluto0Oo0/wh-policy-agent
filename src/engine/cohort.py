@@ -141,15 +141,34 @@ def _run_acceptance() -> int:
     old_profile = {"first_insurance_date": "2022-06-06"}  # 前一天   → 老政策
     all_profile = {"first_insurance_date": "2022-01-01"}  # 全体条件不看这个
 
-    new_cond = next(c for c in conds if c.cond_id.endswith("_04"))
-    old_cond = next(c for c in conds if c.cond_id.endswith("_09"))
-    all_cond = next(c for c in conds if c.applies_to_cohort == "全体")
+    # ⚠️ 按**语义**选条件，不按 cond_id 后缀（F1/F4，wb 2026-10-13）：
+    #    333db36 重编号后 `_04`/`_09` 变成"全体"，按后缀选会静默选错条件，
+    #    测试红 2.5 小时还打印"✅ 全部符合预期"。golden 的 applies_to_cohort
+    #    本来就是语义字段，弃之不用、按后缀选才是根因。
+    #    并断言恰好命中一条：将来同轨道出现多条条件时，让检查炸（该写显式用例），
+    #    而不是让测试静默选错对象 —— 选错比炸更危险，因为它看起来完全正常。
+    def _pick(candidates: list, label: str):
+        # 「恰好一条」只用于新旧轨道：现在各 1 条，将来变多条 = 该写显式用例。
+        # 「全体」本来就是多条（11 条里 9 条），任选一条即可 —— 轨道语义相同。
+        # ⚠️ 显式 raise 不用 assert（NF-2，wb 2026-10-19）：`python -O` 会剥掉
+        #    assert，保障随之静默消失 —— 保障机制不该依赖可被编译选项关掉的语法。
+        if label != COHORT_ALL and len(candidates) != 1:
+            raise AssertionError(
+                f"测试对象选择：{label} 命中 {len(candidates)} 条（期望恰好 1 条，多条应写显式用例）")
+        return candidates[0]
+
+    new_cond = _pick([c for c in conds if classify_cohort(c.applies_to_cohort) == COHORT_NEW],
+                     COHORT_NEW)
+    old_cond = _pick([c for c in conds if classify_cohort(c.applies_to_cohort) == COHORT_OLD],
+                     COHORT_OLD)
+    all_cond = _pick([c for c in conds if classify_cohort(c.applies_to_cohort) == COHORT_ALL],
+                     COHORT_ALL)
 
     checks = [
-        ("_04 对新轨道画像", resolve_cohort(new_profile, new_cond), True),
-        ("_04 对老轨道画像", resolve_cohort(old_profile, new_cond), False),
-        ("_09 对老轨道画像", resolve_cohort(old_profile, old_cond), True),
-        ("_09 对新轨道画像", resolve_cohort(new_profile, old_cond), False),
+        ("新轨道条件对新轨道画像", resolve_cohort(new_profile, new_cond), True),
+        ("新轨道条件对老轨道画像", resolve_cohort(old_profile, new_cond), False),
+        ("老轨道条件对老轨道画像", resolve_cohort(old_profile, old_cond), True),
+        ("老轨道条件对新轨道画像", resolve_cohort(new_profile, old_cond), False),
         ("全体条件对任何人", resolve_cohort(all_profile, all_cond), True),
     ]
     for label, got, want in checks:
@@ -161,7 +180,7 @@ def _run_acceptance() -> int:
         for f in failures:
             print(f"  ❌ {f}")
         return 1
-    print("  ✅ 断言1：9 条 cohort 名全部可归一")
+    print(f"  ✅ 断言1：{len(conds)} 条 cohort 名全部可归一")
     print("  ✅ 断言2：分界点两侧轨道判定正确（2022-06-07 当天算新政策）")
     return 0
 

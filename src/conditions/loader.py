@@ -125,6 +125,9 @@ def load_conditions(path: str | Path) -> list[Condition]:
 # 验收：python -m src.conditions.loader
 # ══════════════════════════════════════════════════════════════
 
+# ⚠️ parents[2] 在这里**有意走死**（wb 2026-11-06 三.1 定论）：
+# golden set 是项目真实评测基准，不存在"指向临时目录"的注入场景
+# （CHECK_TARGET_DIR 隔离机制只服务 scripts/checks 检查器）。
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GOLDEN_PATH = PROJECT_ROOT / "eval" / "golden_conditions.jsonl"
 

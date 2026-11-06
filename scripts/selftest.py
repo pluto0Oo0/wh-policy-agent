@@ -31,6 +31,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -193,13 +194,49 @@ def case_no_bom() -> tuple[bool, str]:
 
 # ══════════════════════════════════════════════════════════════
 
+def case_status_evidence_unverified() -> tuple[bool, str]:
+    """故障 6：有证据但 policy_status 未核实 —— 一致性检查必须报错。
+
+    这是 wb NF-A 的直接反例：原检查 `not X not in Y` 写反，实测
+    「有证据+未核实」漏报。修后 selftest 必须能抓到这个坏数据。
+    """
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        (tmp / "data" / "processed").mkdir(parents=True)
+        (tmp / "data" / "processed" / "policies.jsonl").write_text(
+            json.dumps({
+                "doc_id": "t_test_1", "url": "http://x/1", "title": "测试政策",
+                "publish_date": "2024-01-01", "region": "市级",
+                "template_family": "G", "content": "正文" * 30,
+                "policy_status": "未核实",       # ← 未核实
+                "status_evidence": "已查官网仍有效",  # ← 却有证据（自相矛盾）
+            }, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        (tmp / "eval").mkdir()
+        (tmp / "docs").mkdir()
+        (tmp / "src").mkdir()
+        (tmp / "scripts").mkdir()
+
+        code, out = run_check_deliver(tmp)
+        if "一致性" in out:
+            return True, "✅ 抓到了（有证据+未核实被拦下）"
+        return False, f"❌ 没抓到 —— 自相矛盾的记录混过去了。输出尾部：{out[-150:]}"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 CASES = [
     ("空 JSONL（空输入不该输出 ✅）", case_empty_jsonl),
     ("超长文件（250 行）", case_long_file),
     ("静默吞错 except: pass", case_silent_except),
     ("占位符当有效对比", case_placeholder_samples),
     ("JSONL 带 BOM", case_no_bom),
+    ("status_evidence 有证据+未核实（wb NF-A 2026-11-06）", case_status_evidence_unverified),
 ]
+
+
+
 
 
 def main() -> int:

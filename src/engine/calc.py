@@ -193,6 +193,11 @@ def _run_acceptance() -> int:
     from src.conditions.loader import GOLDEN_PATH, load_conditions
 
     root = Path(__file__).resolve().parents[2]
+
+    # ⚠️ parents[2] 在这里**有意走死**（wb 2026-11-06 三.1 定论）：
+    # 本函数是引擎验收自测（python -m src.engine.*），数据源是**真实项目 data/**，
+    # 不参与 CHECK_TARGET_DIR 注入场景（那是 scripts/checks 检查器的隔离机制）。
+    # 若未来需要把引擎验收指向临时项目，再统一改 config 派生——现在不改是对的。
     conds = load_conditions(GOLDEN_PATH)
     calc_cond = next(c for c in conds if c.cond_type == CALC_TYPE)
     profile = json.loads((root / "data" / "profile.json").read_text(encoding="utf-8"))

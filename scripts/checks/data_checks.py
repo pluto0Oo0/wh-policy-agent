@@ -61,10 +61,15 @@ def check_jsonl() -> None:
                 # 这些字段空/None 是合法态（语义见 config.py 注释），但有
                 # 配套的一致性检查：
                 #   status_evidence 有值 → policy_status 必须已核实
+                # 2026-11-06 wb NF-A：原写法 `not X not in Y` 是双重否定等于
+                # `X in Y`，实测真值表与意图完全相反（现行+有证据被判坏、
+                # 未核实+有证据反而漏过）。修后语义：
+                #   ✅ status_evidence 非空 且 policy_status 不是 '现行' → 报错
+                #   ✅ status_evidence 空 → 不触发（未核实是合法态）
                 if k == "status_evidence":
                     bad = [
                         r["doc_id"] for r in records
-                        if r.get(k) and not r.get("policy_status") not in ("现行",)
+                        if r.get(k) and r.get("policy_status") != "现行"
                     ]
                     if bad:
                         fail(f"[一致性] {p.name} 有 status_evidence 但 policy_status 不是『现行』：{bad[:3]}")

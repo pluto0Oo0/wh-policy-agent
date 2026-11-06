@@ -39,6 +39,8 @@ MIN_RECORDS_FOR_RATE = 5
 # - doc_number：区级流程页本来就没有正式文号（空=不编造）
 ALLOWED_EMPTY_FIELDS = {
     "superseded_by", "status_evidence", "attachments", "doc_number",
+    # status_verified_at：未核实过的政策没有这个时间戳（核实是独立流程，见 crawl.py）
+    "status_verified_at",
 }
 MIN_EXPECTED_SAMPLES = 1
 

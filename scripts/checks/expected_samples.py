@@ -21,7 +21,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# ⚠️ 必须用 config 的 PROJECT_ROOT（支持 CHECK_TARGET_DIR 覆盖）。
+# 曾在这里写死 parents[2]，导致故障注入的临时目录场景检查了真项目 → 恒真。
+# selftest 2026-10-19 抓到此问题。
+from .config import PROJECT_ROOT
+
 SAMPLES_PATH = PROJECT_ROOT / "eval" / "expected_samples.json"
 LIST_PATH = PROJECT_ROOT / "data" / "processed" / "list.jsonl"
 

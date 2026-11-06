@@ -12,7 +12,9 @@ import re
 from pathlib import Path
 
 from .config import (
+    ALLOWED_EMPTY_FIELDS,
     MAX_FIELD_EMPTY_RATE,
+    MIN_RECORDS_FOR_RATE,
     NOT_YET_PHASED,
     PROJECT_ROOT,
     SUSPECT_MOJIBAKE,
@@ -55,7 +57,30 @@ def check_jsonl() -> None:
 
         keys = set().union(*(set(r) for r in records))
         for k in keys:
-            empty = sum(1 for r in records if not r.get(k))
+            if k in ALLOWED_EMPTY_FIELDS:
+                # 这些字段空/None 是合法态（语义见 config.py 注释），但有
+                # 配套的一致性检查：
+                #   status_evidence 有值 → policy_status 必须已核实
+                if k == "status_evidence":
+                    bad = [
+                        r["doc_id"] for r in records
+                        if r.get(k) and not r.get("policy_status") not in ("现行",)
+                    ]
+                    if bad:
+                        fail(f"[一致性] {p.name} 有 status_evidence 但 policy_status 不是『现行』：{bad[:3]}")
+                continue
+            # 「空值」= 字段缺失或 None。[] 和 "" 是合法值（区级页无附件=空列表、
+            # 无文号=空串是事实陈述，不是缺失）——2026-10-19 实测：
+            # not [] == True 导致 28 条「无附件」被误报成空值率 93%
+            empty = sum(1 for r in records if r.get(k) is None or k not in r)
+            # 单记录空值率没有统计意义（1/1 = 100%）：样本不足时声明不评估，
+            # 不静默跳过也不报错（欠条 #5，2026-10-19 所有者批的方向：
+            # len(records)>=5 才算率）
+            if len(records) < MIN_RECORDS_FOR_RATE:
+                if empty:
+                    warn(f"[空字段] {p.name} 字段 `{k}` 有 {empty} 条空值，"
+                         f"但仅 {len(records)} 条记录（<{MIN_RECORDS_FOR_RATE}），样本不足未评估。")
+                continue
             if empty / len(records) > MAX_FIELD_EMPTY_RATE:
                 fail(
                     f"[空字段] {p.name} 字段 `{k}` 空值率 {empty}/{len(records)}，"

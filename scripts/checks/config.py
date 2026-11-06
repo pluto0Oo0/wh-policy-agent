@@ -29,6 +29,17 @@ PROJECT_ROOT = Path(_target).resolve() if _target else Path(__file__).resolve().
 # ── 阈值（改这里，不要改代码）──────────────────────────────
 MAX_FILE_LINES = 200  # CLAUDE.md 第 2 条
 MAX_FIELD_EMPTY_RATE = 0.20  # 自检清单 §二 第 3 条
+# 空值率统计的最小样本量：低于它不报率（无统计意义），声明"样本不足"（欠条 #5）
+MIN_RECORDS_FOR_RATE = 5
+# 允许为空/None 的字段（2026-10-19 实测语义）：
+# - superseded_by：无取代者=None 是正常态（78号文现行）
+# - status_evidence：policy_status="未核实" 时还没有证据（核实流程独立，见 crawl.py 注释）
+#   ⚠️ 这两个字段的真检查是「policy_status≠未核实 却没证据」的一致性检查，不是空值率
+# - attachments：多数页面无 PDF/DOC 附件，空列表是事实
+# - doc_number：区级流程页本来就没有正式文号（空=不编造）
+ALLOWED_EMPTY_FIELDS = {
+    "superseded_by", "status_evidence", "attachments", "doc_number",
+}
 MIN_EXPECTED_SAMPLES = 1
 
 # 数据源验收硬指标（decisions.md D12）

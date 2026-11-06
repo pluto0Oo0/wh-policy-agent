@@ -1,0 +1,26 @@
+```
+2026-10-19 第2轮（筛选入库+检查器修复）验收存档 · 所有命令带退出码
+
+[1] 模块自测（clean.py 改容器后必须回归）
+$ .venv/Scripts/python.exe -m src.engine.cohort
+  → 11 条 cohort 全部可归一；分界点两侧判定正确；5/5 故障注入 ✅  (exit=0)
+
+$ .venv/Scripts/python.exe -m src.engine.eligibility
+  → 15 项自测+故障注入全部符合预期 ✅  (exit=0)
+
+[2] CLI 端到端
+$ .venv/Scripts/python.exe -m src.cli ask --profile data/profile.json
+  → exit=0（UNKNOWN 分支毛 rent 追问正常）
+
+[3] 交付自检（首次全绿）
+$ .venv/Scripts/python.exe scripts/check_deliver.py
+  → ✅ 自动检查全部通过（0 ❌；软预警 ⚠️ 多行可见输出）exit=0
+
+[4] 检查器健康（本轮修恒真 bug 后）
+$ .venv/Scripts/python.exe scripts/selftest.py
+  → 通过 5 / 5（含空JSONL+占位符 2 项此前失败的注入）✅ exit=0
+
+[5] 退出码单独验证（教训 #6：不能用 | tail 后的 $?）
+$ separate echo of $?
+  check_deliver exit=0；selftest exit=0；cli exit=0 —— 三连确认
+```

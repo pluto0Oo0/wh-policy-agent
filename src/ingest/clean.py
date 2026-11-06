@@ -38,7 +38,12 @@ from bs4 import BeautifulSoup
 # ── 已知正文容器，按优先级排 ────────────────────────────────
 # ⚠️ 追加新站点前必须**先实测它到底用哪个类名**，不要猜。
 #    猜错的后果是"正常抓取 + 正文为空"，不报错。
-CONTENT_CONTAINERS = ("TRS_Editor",)
+#
+# 2026-10-19 汉阳区实测标定（30 页全验）：
+#   - 2024-07 起的页面用 trs_editor_view（含 TRS_UEDITOR 类名，仅 2 页）
+#   - 之前的页面用 con-p（布局容器里直接放正文，30 页中 28 页）
+#   - 市级站的 TRS_Editor 在汉阳 30 页里精确匹配 0 次 —— 不写进去
+CONTENT_CONTAINERS = ("TRS_Editor", "trs_editor_view", "con-p")
 
 # ── 七段式关键词（SPEC §3.3 模板族 A 的特征）─────────────────
 # 用途：detect_template_family 靠数这些词的出现来判断"有没有七段式结构"。

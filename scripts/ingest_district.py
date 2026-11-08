@@ -120,8 +120,23 @@ def main() -> int:
 
     # 抽样必须随机（任务书 §四.5"随机抽 2 条"）：确定性取前 2 条会系统性
     # 漏掉列表尾部模板的缺陷——2026-11-08 审核：污染最重的蔡甸恰好从未被抽中。
-    print("\n随机抽样（2 条，人工核对）：")
+    # 抽样结果落盘（第三审 finding 9）：只打印的话，事后无法审计"当时看了什么"。
     sample = random.sample(records, min(2, len(records)))
+    audit_path = PROJECT_ROOT / "data" / "processed" / "sample_audit.json"
+    with audit_path.open("w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "run_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+                "random_seed_used": None,
+                "sampled": [
+                    {"doc_id": rec["doc_id"], "title": rec["title"],
+                     "head": rec["content"][:200], "tail": rec["content"][-120:]}
+                    for rec in sample
+                ],
+            },
+            f, ensure_ascii=False, indent=2,
+        )
+    print("\n随机抽样（2 条，已落盘 data/processed/sample_audit.json）：")
     for rec in sample:
         print(f"  [{rec['region']}] {rec['title']}")
         print(f"    日期：{rec['publish_date'] or '（空）'}  是否政策原文：{rec['is_policy_text']}")

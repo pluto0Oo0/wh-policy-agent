@@ -31,17 +31,12 @@ FOOTER_STARTSWITH = (
     "主办单位", "网站标识码", "网站技术支持", "版权所有", "鄂公网安备",
     "鄂ICP备", "备案编号", "网站地图", "站点地图", "上级政府网站",
     "其他网站", "友情链接", "相关内容", "相关解读", "相关链接", "关联链接",
+    "关联解读",
     "关联政策", "相关文章", "上一篇", "下一篇",
     "中央人民政府", "湖北省人民政府", "武汉市人民政府门户网站",
 )
 
 # 正文开头若是这些形态，说明锚点匹配到了页面小部件而不是文章标题 → 报错。
-# 这些前缀全部来自 2026-11-08 审核抓到的实锤（蔡甸/江夏被重复标题骗过）。
-HTML_BODY_NAV_PREFIX = (
-    "搜 索", "智能助手", "当前位置", "»", "登录", "政务新媒体",
-    "首 页", "首页", "知音蔡甸", "办事服务",
-)
-
 # 导航页脚里的"孤立短行"（面包屑箭头、关闭符号、访问计数）——仅整行相等时删除
 EXACT_NOISE_LINES = ("»", "×", "|", "—", "·")
 
@@ -234,7 +229,7 @@ def extract_body(html: str, title_anchor: str, anchor_pos: str = "last") -> str:
     # "分享/打印/下载"工具条（江岸实测隔了 10 行工具条才见"来源："）。
     SHORT_DATE = re.compile(r"20\d{2}[-年]\d{1,2}[-月]\d{1,2}")
     META_PREFIX = ("发布", "更新", "日期", "来源", "索引", "文号", "字号")
-    TOOLBAR = ("分享到", "【打印", "【下载", "【\xa0字体", "字号 :", "【中", "【大", "【小")
+    TOOLBAR = ("分享到", "【打印", "【下载", "【\xa0字体", "字号 :", "字号：", "【中", "【大", "【小")
     # 工具条伴生的孤立字号行（江岸实测：'大','中','小' 独占一行）
     TOOLBAR_EXACT = ("大", "中", "小", "】")
 
@@ -255,15 +250,23 @@ def extract_body(html: str, title_anchor: str, anchor_pos: str = "last") -> str:
             return False
         has_date = any(SHORT_DATE.search(ln) for ln in window)
         has_meta = any(ln.startswith(META_PREFIX) or any(mp in ln[:12] for mp in ("来源", "日期")) for ln in window)
-        return has_date or has_meta
+        # 新洲形态（第三审抓出）：信息公开元数据表**插在两次标题之间**——
+        # 页首部件（35）带元信息、真文章（51）标题后**直接是长正文行**，
+        # 若只认"元信息"判据会把真文章否决、选中部件（库里的 t20260623 正是受害记录）。
+        # 所以窗口内出现 ≥30 字的长正文行同样算合格锚点：
+        #   部件后 2 行永远是短行（'20'、栏目名、字段名），正文段落不可能那么短。
+        has_body = any(len(ln) >= 30 for ln in window)
+        return has_date or has_meta or has_body
 
     candidates = [i for i in matches if qualifies(i)]
     if not candidates:
         raise ValueError(
-            f"标题锚点 {len(matches)} 处均无元信息窗口，疑似页面改版或选错锚点：{title_anchor!r}"
+            f"标题锚点 {len(matches)} 处均无元信息/正文窗口，疑似页面改版或选错锚点：{title_anchor!r}"
         )
     # anchor_pos 由页级配置决定：信息公开页取 last，新闻页取 first。
     # 单一规则必然选错——这是 2026-11-08 审核后重放的实测结论。
+    # 新洲形态修复（第三审）只改 qualifies（真文章"标题→直承长正文"也合格），
+    # 不做"长正文优先"——实测它会破坏纠结区的 last 语义（经开区回退事故）。
     start = candidates[-1] if anchor_pos == "last" else candidates[0]
 
     body: list[str] = []

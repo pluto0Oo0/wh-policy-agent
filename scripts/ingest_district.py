@@ -15,6 +15,7 @@
 """
 
 import json
+import random
 import sys
 import time
 from datetime import datetime, timezone
@@ -25,7 +26,12 @@ import requests
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.ingest.district_sources import SOURCES, extract_body, extract_date  # noqa: E402
+from src.ingest.district_sources import (  # noqa: E402
+    SOURCES,
+    doc_id_from_url,
+    extract_body,
+    extract_date,
+)
 
 RAW_DIR = PROJECT_ROOT / "data" / "raw" / "district"
 OUT_JSONL = PROJECT_ROOT / "data" / "processed" / "district_candidates.jsonl"
@@ -57,11 +63,11 @@ def build_record(src, html: str) -> dict:
     为什么 `policy_status` 固定为「未核实」：区级源的有效性需要人工或后续流程核实，
     在这里假定"现行"就是编造。`status_evidence` 留空，符合 ALLOWED_EMPTY_FIELDS。
     """
-    body = extract_body(html, src.title_anchor)
+    body = extract_body(html, src.title_anchor, src.anchor_pos)
     if len(body) < MIN_BODY_CHARS:
         raise ValueError(f"正文只有 {len(body)} 字，低于 {MIN_BODY_CHARS}，疑似抽到导航页")
     return {
-        "doc_id": src.key,
+        "doc_id": doc_id_from_url(src.url),
         "url": src.url,
         "title": src.title_anchor,
         "doc_number": "",
@@ -75,6 +81,8 @@ def build_record(src, html: str) -> dict:
         "status_evidence": "",
         "superseded_by": None,
         "source_role": "content",
+        "attachments": [],
+        # 区分政策原文/新闻稿：合并进正式库时必须保留（审核 2026-11-08 找回）
         "is_policy_text": src.is_policy_text,
         "note": src.note,
     }
@@ -89,7 +97,8 @@ def main() -> int:
     for src in SOURCES:
         try:
             html = fetch(src.url)
-            (RAW_DIR / f"{src.key}.html").write_text(html, encoding="utf-8")
+            raw_path = RAW_DIR / f"{src.region}_{doc_id_from_url(src.url)}.html"
+            raw_path.write_text(html, encoding="utf-8")
             records.append(build_record(src, html))
             print(f"OK   {src.key:20} {src.region}")
         except Exception as exc:  # 记录后继续，最后统一判定，不静默
@@ -109,11 +118,15 @@ def main() -> int:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     print(f"已写入 {OUT_JSONL.relative_to(PROJECT_ROOT)}（{len(records)} 行）")
 
-    print("\n抽样（2 条，人工核对）：")
-    for rec in records[:2]:
+    # 抽样必须随机（任务书 §四.5"随机抽 2 条"）：确定性取前 2 条会系统性
+    # 漏掉列表尾部模板的缺陷——2026-11-08 审核：污染最重的蔡甸恰好从未被抽中。
+    print("\n随机抽样（2 条，人工核对）：")
+    sample = random.sample(records, min(2, len(records)))
+    for rec in sample:
         print(f"  [{rec['region']}] {rec['title']}")
         print(f"    日期：{rec['publish_date'] or '（空）'}  是否政策原文：{rec['is_policy_text']}")
         print(f"    正文前 200 字：{rec['content'][:200]!r}")
+        print(f"    正文后 120 字：{rec['content'][-120:]!r}")
     return 0
 
 

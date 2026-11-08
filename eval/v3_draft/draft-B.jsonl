@@ -1,0 +1,3 @@
+{"draft_id":"B01","source_sentences":["S04"],"paraphrase":"高校毕业生年龄须不满45周岁，研究生不受年龄限制。","quote":"年龄不满45周岁（研究生不受年龄限制）","field_suggest":"age","op_suggest":"<","value_suggest":45,"uncertain":"研究生年龄豁免需要按学历类别拆分，单一年龄阈值无法表达。"}
+{"draft_id":"B02","source_sentences":["S04"],"paraphrase":"高校毕业生凭毕业证书办理市内落户。","quote":"高校毕业生凭毕业证书在市内落户","field_suggest":"education","op_suggest":"exists","value_suggest":true,"uncertain":"原文要求凭毕业证书，但没有规定最低学历层级。"}
+{"draft_id":"B03","source_sentences":["S04"],"paraphrase":"配偶及未成年子女可随迁落户。","quote":"其配偶以及未成年子女可随迁落户","field_suggest":null,"op_suggest":null,"value_suggest":null,"uncertain":"允许字段中没有家庭成员关系或随迁资格字段；不能忠实映射到现有字段。"}

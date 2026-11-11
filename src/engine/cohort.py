@@ -141,28 +141,27 @@ def _run_acceptance() -> int:
     old_profile = {"first_insurance_date": "2022-06-06"}  # 前一天   → 老政策
     all_profile = {"first_insurance_date": "2022-01-01"}  # 全体条件不看这个
 
-    # ⚠️ 按**语义**选条件，不按 cond_id 后缀（F1/F4，wb 2026-10-13）：
-    #    333db36 重编号后 `_04`/`_09` 变成"全体"，按后缀选会静默选错条件，
-    #    测试红 2.5 小时还打印"✅ 全部符合预期"。golden 的 applies_to_cohort
-    #    本来就是语义字段，弃之不用、按后缀选才是根因。
-    #    并断言恰好命中一条：将来同轨道出现多条条件时，让检查炸（该写显式用例），
-    #    而不是让测试静默选错对象 —— 选错比炸更危险，因为它看起来完全正常。
-    def _pick(candidates: list, label: str):
-        # 「恰好一条」只用于新旧轨道：现在各 1 条，将来变多条 = 该写显式用例。
-        # 「全体」本来就是多条（11 条里 9 条），任选一条即可 —— 轨道语义相同。
-        # ⚠️ 显式 raise 不用 assert（NF-2，wb 2026-10-19）：`python -O` 会剥掉
-        #    assert，保障随之静默消失 —— 保障机制不该依赖可被编译选项关掉的语法。
-        if label != COHORT_ALL and len(candidates) != 1:
+    # ⚠️ v4（2026-11-11）起，同轨道条件已有多条（区级条件并入），
+    #    原来"恰好命中一条"的断言会失效。这里改成**显式点名 78 号文的三条**，
+    #    并核对它们确实属于预期轨道 —— ID 变更时炸，而不是静默换一条对象。
+    #    为什么点名而不是按后缀选：2026-10-13 重编号后，按 `_04`/`_09` 后缀选
+    #    **静默选错了条件**，测试红了 2.5 小时还打印"✅ 全部符合预期"。
+    #    点名 + 核对 cohort 是双重校验：改名会炸，语义变了也会炸。
+    #    ⚠️ 显式 raise 不用 assert（NF-2，wb 2026-10-19）：`python -O` 会剥掉 assert，
+    #       保障随之静默消失 —— 保障机制不该依赖可被编译选项关掉的语法。
+    def _pick_explicit(cond_id: str, cohort: str):
+        hits = [c for c in conds if c.cond_id == cond_id]
+        if len(hits) != 1:
+            raise AssertionError(f"测试对象选择：{cond_id} 命中 {len(hits)} 条（期望恰好 1 条）")
+        got = classify_cohort(hits[0].applies_to_cohort)
+        if got != cohort:
             raise AssertionError(
-                f"测试对象选择：{label} 命中 {len(candidates)} 条（期望恰好 1 条，多条应写显式用例）")
-        return candidates[0]
+                f"测试对象选择：{cond_id} 的轨道是 {got}，期望 {cohort} —— 条件语义变了")
+        return hits[0]
 
-    new_cond = _pick([c for c in conds if classify_cohort(c.applies_to_cohort) == COHORT_NEW],
-                     COHORT_NEW)
-    old_cond = _pick([c for c in conds if classify_cohort(c.applies_to_cohort) == COHORT_OLD],
-                     COHORT_OLD)
-    all_cond = _pick([c for c in conds if classify_cohort(c.applies_to_cohort) == COHORT_ALL],
-                     COHORT_ALL)
+    new_cond = _pick_explicit("t20220608_1983869_05", COHORT_NEW)
+    old_cond = _pick_explicit("t20220608_1983869_10", COHORT_OLD)
+    all_cond = _pick_explicit("t20220608_1983869_01", COHORT_ALL)
 
     checks = [
         ("新轨道条件对新轨道画像", resolve_cohort(new_profile, new_cond), True),

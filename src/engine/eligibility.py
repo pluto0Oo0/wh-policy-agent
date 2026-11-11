@@ -28,6 +28,7 @@ SPEC §5 签名（不得改名）：
 
 **汇总规则**：`FAIL` 优先于 `UNKNOWN`（有一条确定不符合，就不用再问了）；
 但**只要有一条 UNKNOWN 且没有 FAIL，整体就是 UNKNOWN**，不许硬给 ELIGIBLE。
+**全部条件都是 N/A 时同样返回 UNKNOWN** —— 一条 PASS 都没有，不能当"符合"。
 """
 
 from src.conditions.model import CALC_TYPE, Condition, ConditionError
@@ -374,10 +375,16 @@ def check_eligibility(
         if missing_field and missing_field not in missing:
             missing.append(missing_field)
 
-    # ── 汇总（FAIL 优先于 UNKNOWN）──────────────────────────
+    # ── 汇总（FAIL 优先于 UNKNOWN；全部 N/A 不能当 ELIGIBLE）────
     statuses = {r["status"] for r in reasons}
+    all_na = statuses == {NOT_APPLICABLE}
     if FAIL in statuses:
         verdict = VERDICT_INELIGIBLE
+    elif all_na:
+        # 全部条件都不适用于这个画像（例：老政策文档 × 新轨道画像）。
+        # **一条 PASS 都没有，凭什么说"符合"？** 2026-11-11 v4 实测：
+        # 汉阳解读 3 条全是老轨道，新轨道画像曾被判 ELIGIBLE —— 假阳性。
+        verdict = VERDICT_UNKNOWN
     elif UNKNOWN in statuses:
         # **不许把 UNKNOWN 当 ELIGIBLE**：那等于默认成立
         verdict = VERDICT_UNKNOWN
@@ -386,7 +393,9 @@ def check_eligibility(
 
     # ── status_warning（SPEC §3.5b）──────────────────────────
     status_warning = None
-    if policy_status == STATUS_PARTIAL:
+    if all_na:
+        status_warning = "该政策的全部条件都不适用于你的政策轨道（老/新），无法给出结论。"
+    elif policy_status == STATUS_PARTIAL:
         status_warning = "该政策部分失效，结论仅供参考。"
     elif policy_status == STATUS_UNVERIFIED:
         status_warning = "该政策状态未核实，请以官方口径为准。"
@@ -523,11 +532,19 @@ def _run_fault_injection() -> int:
     removed = ("housing_owned_in_wuhan", "social_insurance_active")
     thin = {k: v for k, v in profile.items() if k not in removed}
     r2 = check_eligibility(thin, conds, policy_meta=doc)
+    # v4（2026-11-11）起同一字段出现在多条/多个轨道：老轨道条件对这个新轨道画像
+    # 应记 N/A（不适用），不是 UNKNOWN。断言只要求"在适用范围内的受影响条件"变 UNKNOWN。
     affected = {c.cond_id for c in conds if c.field in removed}
+    in_scope = {c.cond_id for c in conds
+                if c.field in removed and resolve_cohort(thin, c)}
+    # 空集合会让 `in_scope <= got_unknown` 恒真 —— 正是第 10.1 条 Q5 的"空输入输出 ✅"。
+    if not in_scope:
+        print("  🔴 缺字段断言：在轨道内命中 0 条，断言恒真（golden 结构变了？）")
+        return 1
     got_unknown = {x["cond_id"] for x in r2["reasons"] if x["status"] == UNKNOWN}
-    ok2 = affected <= got_unknown
-    print(f"  {'✅' if ok2 else '🔴'} 缺字段 → 对应条件记 UNKNOWN     受影响 {len(affected)} 条，"
-          f"其中 UNKNOWN {len(affected & got_unknown)} 条")
+    ok2 = in_scope <= got_unknown
+    print(f"  {'✅' if ok2 else '🔴'} 缺字段 → 对应条件记 UNKNOWN     受影响 {len(affected)} 条"
+          f"（在轨道内 {len(in_scope)}），其中 UNKNOWN {len(in_scope & got_unknown)} 条")
     if not ok2:
         bad += 1
 
@@ -572,8 +589,9 @@ def _run_fault_injection() -> int:
     new_profile = {"first_insurance_date": "2023-01-01"}  # 新轨道画像
     r8 = check_eligibility(new_profile, old_only, policy_meta=doc, as_of_year=2026)
     na_cnt = sum(1 for x in r8["reasons"] if x["status"] == NOT_APPLICABLE)
-    ok8 = len(r8["reasons"]) == len(old_only) and na_cnt == len(old_only)
-    print(f"  {'✅' if ok8 else '🔴'} ⑧cohort不适用 → 全部 N/A 不进 verdict  "
+    ok8 = (len(r8["reasons"]) == len(old_only) and na_cnt == len(old_only)
+           and r8["verdict"] == VERDICT_UNKNOWN)
+    print(f"  {'✅' if ok8 else '🔴'} ⑧cohort不适用 → 全部 N/A 记 UNKNOWN  "
           f"N/A={na_cnt}/{len(old_only)} verdict={r8['verdict']}")
     if not ok8:
         bad += 1

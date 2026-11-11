@@ -47,6 +47,7 @@ from src.engine.eligibility import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+V4_PENDING_PATH = PROJECT_ROOT / "eval" / "v4_pending.jsonl"
 
 # 每条 reason 的显示符号。为什么用符号不用文字：
 #   一眼扫出"哪几条是问题"，比读 11 行"PASS/FAIL"快得多。
@@ -100,6 +101,25 @@ def _load_json(path: Path) -> dict:
         raise ValueError(f"{path} 不是合法 JSON：{e.msg}（第 {e.lineno} 行）") from e
 
 
+def _pending_counts() -> dict[str, int]:
+    """doc_id → 该政策还有多少条草案没结构化（来自 eval/v4_pending.jsonl）。
+
+    为什么 CLI 要知道这个：区级公告的「意向租住区为 X 区」等硬条件还在 pending，
+    只看已并入的条件会把别区的人判成"符合"——**假 ELIGIBLE**。
+    文件缺失时不静默跳过：打印告警，让所有者知道这层保护失效了。
+    """
+    if not V4_PENDING_PATH.exists():
+        print(f"⚠️  找不到 {V4_PENDING_PATH}，覆盖完整性检查本次跳过",
+              file=sys.stderr)
+        return {}
+    counts: dict[str, int] = {}
+    for ln in V4_PENDING_PATH.read_text(encoding="utf-8").splitlines():
+        if ln.strip():
+            did = json.loads(ln)["doc_id"]
+            counts[did] = counts.get(did, 0) + 1
+    return counts
+
+
 def _find_policy(docs: list[dict], doc_id: str | None) -> dict:
     """从 policies.jsonl 里挑一条政策。给了 doc_id 就精确找，没给就取第一条。"""
     if not docs:
@@ -116,8 +136,9 @@ def _find_policy(docs: list[dict], doc_id: str | None) -> dict:
     return hit
 
 
-def _print_result(result: dict, conditions: list[Condition]) -> None:  # noqa: F821
-    """把人话结果打到终端。"""
+def _print_result(result: dict, conditions: list[Condition],  # noqa: F821
+                  coverage_missing: int = 0) -> None:
+    """把人话结果打到终端。coverage_missing>0 时结论降级为「信息不足」。"""
     by_id = {c.cond_id: c for c in conditions}
 
     print("=" * 66)
@@ -135,6 +156,11 @@ def _print_result(result: dict, conditions: list[Condition]) -> None:  # noqa: F
         VERDICT_INELIGIBLE: "❌ 不符合条件",
         VERDICT_UNKNOWN: "❓ 信息不足，暂时判不了",
     }[result["verdict"]]
+    if coverage_missing:
+        # 已有条件全 PASS 也不能说"符合"：少掉的那几条可能正好是否决项。
+        verdict_text = f"❓ 信息不足（该政策还有 {coverage_missing} 条条件未结构化）"
+        print(f"\n⚠️  覆盖不完整：{coverage_missing} 条条件还没进 golden"
+              f"（见 eval/v4_pending.jsonl），本次结论不能用于最终判断。")
     print(f"\n【结论】{verdict_text}")
 
     # ── ③ 逐条依据（SPEC §2.4：每条带 source_text）──────────────
@@ -218,7 +244,7 @@ def _cmd_ask(args: argparse.Namespace) -> int:
         return 2
 
     result = check_eligibility(profile, conditions, policy_meta=policy)
-    _print_result(result, conditions)
+    _print_result(result, conditions, _pending_counts().get(policy["doc_id"], 0))
     return 0
 
 

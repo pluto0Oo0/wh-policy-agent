@@ -1,11 +1,11 @@
-"""golden v4 构建：v3（14 条）+ T04 独立条（28 条）。
+"""golden v4 构建：v3.1（13 条）+ T04 独立条（28 条）。
 
 输入：
-    eval/v3_draft/golden_conditions_v3.jsonl   v3 冻结快照（14 条）
+    eval/v3_draft/golden_conditions_v3_1.jsonl 修正版 v3.1（13 条；_14 移到 v4_benefits）
     eval/t04_draft/conditions-DRAFT.jsonl      Codex T04 草案（89 条）
     eval/t04_draft/*.txt                       19 份原文快照
 输出：
-    eval/golden_conditions.jsonl               v4（42 条）
+    eval/golden_conditions.jsonl               v4（41 条）
     eval/v4_lineage.jsonl                      derived 14 条，只记归属
     eval/v4_pending.jsonl                      47 条待拍板/待公式
 
@@ -27,7 +27,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 EVAL = ROOT / "eval"
 DRAFT_DIR = EVAL / "t04_draft"
-V3_PATH = EVAL / "v3_draft" / "golden_conditions_v3.jsonl"
+V3_PATH = EVAL / "v3_draft" / "golden_conditions_v3_1.jsonl"
 GOLDEN_PATH = EVAL / "golden_conditions.jsonl"
 
 # ── 决策表（数据，不是代码）：eval/v4_decisions.json ──────────
@@ -138,7 +138,7 @@ def main() -> int:
             "quote": r["quote"], "reason": reason,
         })
 
-    # ── 分区断言：89 条必须 = 14 + 28 + 47 ─────────────────────
+    # ── 分区断言：89 条草案必须 = 14 + 28 + 47（v3.1 的 13 条不在草案内） ─────────────────────
     total = len(lineage) + len(added) + len(pending)
     if total != len(drafts):
         raise SystemExit(f"🔴 分区丢条：{len(drafts)} 条草案只落了 {total} 条")

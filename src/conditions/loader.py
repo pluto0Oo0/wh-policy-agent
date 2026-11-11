@@ -131,12 +131,12 @@ def load_conditions(path: str | Path) -> list[Condition]:
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GOLDEN_PATH = PROJECT_ROOT / "eval" / "golden_conditions.jsonl"
 
-# golden set 的预期条件数（2026-11-11：v4 = v3 14 条 + T04 28 条）。
+# golden set 的预期条件数（2026-11-11：v4 = v3.1 13 条 + T04 28 条）。
 # 为什么写成常量而不是在断言里写死字面量：
 #   2026-10-13 实测踩过 —— 断言里写死 `!= 9`，golden set 从 9 条涨到 13 条后
 #   验收直接失败，**而失败原因是"断言过期"，不是"数据错了"**。
 #   写成一个有名字的常量，下次改数据时至少会看到它、需要主动改它。
-EXPECTED_CONDITION_COUNT = 42
+EXPECTED_CONDITION_COUNT = 41
 
 # ══════════════════════════════════════════════════════════════
 # 取值域交集检测（2026-10-13 新增，wb 建议的"强检测"）
@@ -251,8 +251,13 @@ def _run_acceptance() -> int:
         failures.append("断言1b：一条时序互斥都没有（grandfathering 分界条件）")
     if not any("老政策" in c.applies_to_cohort for c in conds):
         failures.append("断言1c：缺老政策通道的 cohort（双轨的另一半）")
-    if not any(c.is_ambiguous for c in conds):
-        failures.append("断言1d：一条 ambiguity 都没有（SPEC §3.5 说约 30% 条件含模糊表述）")
+    # 2026-11-11 调整：v3.1 把 6 条“画像字段待补充”误用的 ambiguity 清成了 null
+    # （它们不是原文模糊，缺字段由引擎 UNKNOWN 分支处理）。本批政策文本清晰，
+    # golden 里确实可以 0 条 ambiguity —— 不能再把“没有”判成失败，否则会逼人
+    # 为了过检查去造一条假模糊条件。ambiguity 分支由 eligibility 自测覆盖。
+    has_ambiguity = any(c.is_ambiguous for c in conds)
+    if not has_ambiguity:
+        print("  ⚠️  断言1d：golden 没有 ambiguity 条件（本批文本清晰）；该分支由 eligibility 自测覆盖")
     # 条数下限兜底：防"加载到 0 条 / 极少条"这种极端情况
     if len(conds) < 5:
         failures.append(f"断言1e：只加载到 {len(conds)} 条，疑似加载不完整")
@@ -293,7 +298,8 @@ def _run_acceptance() -> int:
         print(f"\n❌ 未通过，{len(failures)} 个问题")
         return 1
 
-    print(f"  ✅ 断言1（语义特征）：计算类/时序互斥/老政策通道/ambiguity 都在")
+    print(f"  ✅ 断言1（语义特征）：计算类/时序互斥/老政策通道都在"
+          f"{'/ambiguity' if has_ambiguity else '（ambiguity 由自测覆盖）'}")
     print("  ✅ 断言2：cond_id 唯一")
     print(f"  ✅ 断言3：计算类 {len(calc)} 条且都有 formula")
     print(f"  ✅ 断言4：含老政策通道（cohort 共 {len(cohorts)} 种）")

@@ -131,12 +131,12 @@ def load_conditions(path: str | Path) -> list[Condition]:
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GOLDEN_PATH = PROJECT_ROOT / "eval" / "golden_conditions.jsonl"
 
-# golden set 的预期条件数（2026-11-11：v4 = v3 14 条 + T04 27 条）。
+# golden set 的预期条件数（2026-11-11：v4 = v3 14 条 + T04 28 条）。
 # 为什么写成常量而不是在断言里写死字面量：
 #   2026-10-13 实测踩过 —— 断言里写死 `!= 9`，golden set 从 9 条涨到 13 条后
 #   验收直接失败，**而失败原因是"断言过期"，不是"数据错了"**。
 #   写成一个有名字的常量，下次改数据时至少会看到它、需要主动改它。
-EXPECTED_CONDITION_COUNT = 41
+EXPECTED_CONDITION_COUNT = 42
 
 # ══════════════════════════════════════════════════════════════
 # 取值域交集检测（2026-10-13 新增，wb 建议的"强检测"）

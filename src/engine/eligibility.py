@@ -429,7 +429,21 @@ def check_eligibility(
     # ── 汇总（FAIL 优先于 UNKNOWN；全部 N/A 不能当 ELIGIBLE）────
     statuses = {r["status"] for r in reasons}
     all_na = statuses == {NOT_APPLICABLE}
-    if FAIL in statuses:
+    if mixed_policies_warning:
+        # 🔴 混算时**不许给确定结论**（2026-11-20 修，code-review 指出）。
+        #
+        # 为什么不能只警告、照常判：
+        #   混算 = 把 20 个政策的条件一起判，其中别的政策的 FAIL 会压掉本政策的 UNKNOWN
+        #   → verdict=INELIGIBLE（"你不符合"）—— **这是一个假阳性**，
+        #     而且用户完全看不出来（warning 在终端，调用方多半不看）。
+        #   CLAUDE.md 第 10.1 条第 5 问："如果输入是空的/全失败了，输出什么？"
+        #   → 输出"你不符合" = 最危险的一类 bug。
+        #
+        #   UNKNOWN 是这里唯一诚实的答案：
+        #     **不是**"信息不足"那回事（用户没填字段），
+        #     而是"调用方没给我足够信息来判断" —— 由调用方修，warning 说清是什么。
+        verdict = VERDICT_UNKNOWN
+    elif FAIL in statuses:
         verdict = VERDICT_INELIGIBLE
     elif all_na:
         # 全部条件都不适用于这个画像（例：老政策文档 × 新轨道画像）。
@@ -790,14 +804,17 @@ def _run_fault_injection() -> int:
     if not oke2:
         bad += 1
 
-    # 第三条：**policy_meta 没有 doc_id 时必须给出警告**。
+    # 第三条：**policy_meta 没有 doc_id 时必须警告，而且不许给确定结论**。
     # 这种情况下引擎无法确定判哪条政策，只能按传入的全部条件判 ——
     # 而那可能是 20 个政策混在一起（就是本次要消灭的假阳性）。
     # 老行为是**静默**混算，输出上看不出来，所以这里要求它必须说。
+    # ⚠️ 而且 verdict 必须是 UNKNOWN —— 混算时别的政策的 FAIL 会压掉本政策的 UNKNOWN，
+    #    给出 INELIGIBLE 就是**假阳性**（2026-11-20 code-review 指出）。
     rr = check_eligibility(profile, conds, policy_meta={"title": "无 doc_id 测试"})
-    oke3 = bool(rr.get("status_warning")) and "doc_id" in rr["status_warning"]
-    print(f"  {'✅' if oke3 else '🔴'} policy_meta 无 doc_id → 必须警告混算   "
-          f"warning={str(rr.get('status_warning'))[:44]}")
+    oke3 = (bool(rr.get("status_warning")) and "doc_id" in rr["status_warning"]
+            and rr["verdict"] == UNKNOWN)
+    print(f"  {'✅' if oke3 else '🔴'} policy_meta 无 doc_id → 必须警告且不判确定结论   "
+          f"verdict={rr['verdict']} warning={str(rr.get('status_warning'))[:36]}")
     if not oke3:
         bad += 1
 

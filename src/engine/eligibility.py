@@ -255,7 +255,9 @@ def check_eligibility(
 
     参数：
         profile:     用户画像（SPEC §2.3）
-        conditions:  该政策的全部条件
+        conditions:  该政策的全部条件。
+                     **允许传全量条件集**——引擎会按 `policy_meta["doc_id"]` 自动过滤
+                     （见下方「为什么在引擎里过滤」）。
         policy_meta: 政策元信息（title / doc_number / policy_status / where_to_apply），
                      来自 `policies.jsonl` 的一条。缺省时用安全默认值。
         as_of_year:  判定基准年份，用于算"毕业N年以内"这类滚动窗口。
@@ -284,6 +286,55 @@ def check_eligibility(
 
     meta = policy_meta or {}
     policy_status = meta.get("policy_status", STATUS_UNVERIFIED)
+
+    # ── 按政策过滤条件（2026-11-20 修）────────────────────────────
+    # 🔴 为什么必须在这里过滤，而不是"要求调用方自己过滤"：
+    #
+    #   2026-11-20 实测踩过 —— 判定 78 号文时把**全部 20 个政策、52 条条件**
+    #   一起算了进去。其中 6 条区级「意向租住区为 X 区」判 FAIL，
+    #   而下面 `if FAIL in statuses:` 让 FAIL 优先于 UNKNOWN →
+    #   **verdict 被压成 INELIGIBLE，「信息不足」被判成「不符合」。**
+    #
+    #   最危险的地方不是这个 bug 本身，是**它藏得住**：
+    #   `cli.py` 和 `evaluate.py` 各自都做了 doc_id 过滤，所以它们的输出一直是对的。
+    #   只有引擎自测这一处传了全量 → **只有跑 `python -m src.engine.eligibility`
+    #   才会暴露它**。哪天没人跑那条命令，这个 bug 可以一直躺着，
+    #   直到某个人写了个新调用方忘了过滤，判定结果直接判错——而且不报错。
+    #
+    #   这正是 CLAUDE.md 第 10 条说的「程序不报错但结果是垃圾」。
+    #
+    #   → 把过滤放进引擎，新调用方自动免疫。
+    #     调用方再过滤一次也无害（幂等）。
+    #
+    # ⚠️ policy_meta 没有 doc_id 时**不过滤** —— 因为"属于哪个政策"根本无从判断。
+    #    但这种情况必须**显式告知调用方**，否则它会拿到一个混算了 20 个政策的结论，
+    #    而输出上看不出来（老行为就是这样）。
+    #    → 这里加一条 status_warning，让"混算"这件事在输出里可见。
+    #    （2026-11-20 实测：policy_meta=None 时 verdict=INELIGIBLE、reasons=52，
+    #     正是本次要消灭的那个假阳性。）
+    target_doc_id = meta.get("doc_id")
+    mixed_policies_warning = None
+    if target_doc_id:
+        conditions = [c for c in conditions if c.doc_id == target_doc_id]
+        # 过滤后为空 = 这个政策在 golden 里一条条件都没有 → 必须报错。
+        # 理由同上面「空条件」：继续走下去会判 ELIGIBLE，对每个人都判"能享受"。
+        if not conditions:
+            raise EligibilityError(
+                f"政策 {target_doc_id} 在条件库里一条条件都没有，无法判定。\n"
+                "→ 可能是 doc_id 写错了，或该政策的条件还没进 golden。"
+                "宁可报错，也不要判成'符合'。"
+            )
+    else:
+        # 没有 doc_id = 无法确定该判哪个政策。
+        # 老行为是照样判（可能混算），但**必须在输出里说明这件事**，
+        # 否则调用方会拿到一个"看起来正常"的错误结论。
+        doc_ids = {c.doc_id for c in conditions}
+        if len(doc_ids) > 1:
+            mixed_policies_warning = (
+                f"policy_meta 没有 doc_id，无法确定判哪条政策；"
+                f"已按传入的全部 {len(conditions)} 条条件（涉及 {len(doc_ids)} 个政策）判定。"
+                "结论可能混入其他政策的条件 —— 调用方应传带 doc_id 的 policy_meta。"
+            )
 
     # ── SPEC §3.5b：已废止的政策不参与判定 ────────────────────
     # 给已废止政策做资格判定，无论结果是什么都是错的：
@@ -395,6 +446,11 @@ def check_eligibility(
     status_warning = None
     if all_na:
         status_warning = "该政策的全部条件都不适用于你的政策轨道（老/新），无法给出结论。"
+    elif mixed_policies_warning:
+        # ⚠️ 混算警告**优先于**其他警告（2026-11-20）。
+        #    理由：政策状态"未核实"是数据问题，混算是**方法问题**——
+        #    后者会让整个结论不可用，前者只是提醒。
+        status_warning = mixed_policies_warning
     elif policy_status == STATUS_PARTIAL:
         status_warning = "该政策部分失效，结论仅供参考。"
     elif policy_status == STATUS_UNVERIFIED:
@@ -453,7 +509,7 @@ def _run_acceptance() -> int:
         print(f"  {x['cond_id'][-2:]}  {x['status']:<8} {x['source_text'][:34]}")
 
     failures: list[str] = []
-    # 断言 0：**每条条件都必须出现在 reasons 里**。
+    # 断言 0：**该政策的每条条件都必须出现在 reasons 里**。
     #
     # 🔴 这条断言是 2026-10-13 补的，由 wb 指出 `_09` 漏报而引出。
     #    原来没有它，于是计算类被 `continue` 跳过后 **reasons 只有 12 条 / 条件 13 条**，
@@ -462,10 +518,29 @@ def _run_acceptance() -> int:
     #    为什么用"逐条比对 cond_id"而不是"数条数"：
     #      数条数只能发现"少了"，不能发现"少了哪一条"。
     #      逐条比对能直接报出缺失的 cond_id，**报错信息本身就可行动**。
+    #
+    # ⚠️ 2026-11-20 修正：**只比对本政策的条件，不能比全量。**
+    #    引擎现在按 doc_id 过滤（见 check_eligibility 里的过滤段），
+    #    如果这里还拿全量 52 条来比，**断言会在引擎修好之后失败** ——
+    #    等于把「把别的政策也算进来」这个错误行为固化成正确行为。
+    #    那 20 个政策里另外 19 个的条件，本来就不该出现在本政策的 reasons 里。
+    own_conds = [c for c in conds if c.doc_id == doc["doc_id"]]
     reason_ids = {x["cond_id"] for x in r["reasons"]}
-    missing_ids = [c.cond_id for c in conds if c.cond_id not in reason_ids]
+    missing_ids = [c.cond_id for c in own_conds if c.cond_id not in reason_ids]
     if missing_ids:
         failures.append(f"断言0：这些条件没进 reasons —— {missing_ids}")
+
+    # 断言 0b：**别的政策的条件绝不能混进本政策的 reasons**。
+    #    这条是 2026-11-20 加的，是「跨政策污染」的回归防线。
+    #    没有它时，引擎把 20 个政策全算进去也能全绿 ——
+    #    **一个永远不会报警的检查，等于没有这个检查。**
+    foreign_ids = [x["cond_id"] for x in r["reasons"]
+                   if x["cond_id"] not in {c.cond_id for c in own_conds}]
+    if foreign_ids:
+        failures.append(
+            f"断言0b：混进了别的政策的条件 {foreign_ids[:5]}"
+            f"（共 {len(foreign_ids)} 条）—— 引擎必须按 doc_id 过滤"
+        )
 
     # 断言 1：reasons 每条都带 source_text（SPEC §2.4 硬要求）
     if not all(x["source_text"] for x in r["reasons"]):
@@ -485,7 +560,7 @@ def _run_acceptance() -> int:
         for f in failures:
             print(f"  ❌ {f}")
         return 1
-    print(f"  ✅ 断言0：{len(conds)} 条条件全部出现在 reasons 里")
+    print(f"  ✅ 断言0：本政策 {len(own_conds)} 条条件全部出现在 reasons 里")
     print("  ✅ 断言1：每条 reason 都带 source_text")
     print("  ✅ 断言2：未核实状态带 status_warning")
     print("  ✅ 断言3：verdict 合法")
@@ -534,8 +609,16 @@ def _run_fault_injection() -> int:
     r2 = check_eligibility(thin, conds, policy_meta=doc)
     # v4（2026-11-11）起同一字段出现在多条/多个轨道：老轨道条件对这个新轨道画像
     # 应记 N/A（不适用），不是 UNKNOWN。断言只要求"在适用范围内的受影响条件"变 UNKNOWN。
-    affected = {c.cond_id for c in conds if c.field in removed}
-    in_scope = {c.cond_id for c in conds
+    #
+    # ⚠️ 2026-11-20 修正：**只在**本政策的条件**里数 affected/in_scope。
+    #    原来从全量 conds 数，于是断言要求"别的政策的条件也要变 UNKNOWN"——
+    #    而引擎按 doc_id 过滤后，别的政策的条件根本不会进 reasons，
+    #    断言就必然失败。
+    #    这不是把断言放宽，是**让它测的东西和它的本意一致**：
+    #    本意是"缺字段 → 本政策里用到该字段的条件变 UNKNOWN"。
+    own_conds = [c for c in conds if c.doc_id == doc["doc_id"]]
+    affected = {c.cond_id for c in own_conds if c.field in removed}
+    in_scope = {c.cond_id for c in own_conds
                 if c.field in removed and resolve_cohort(thin, c)}
     # 空集合会让 `in_scope <= got_unknown` 恒真 —— 正是第 10.1 条 Q5 的"空输入输出 ✅"。
     if not in_scope:
@@ -584,8 +667,15 @@ def _run_fault_injection() -> int:
     # cohort 不适用 → N/A，且 **N/A 不许进 verdict**（N/A 不是失败：
     # 老轨道的人看新政策条件被判"不符合"是把不适用当 FAIL 的典型后果）。
     # 同样在此之前只有实现没有断言。
-    old_only = [c for c in conds if "老政策通道" in c.applies_to_cohort]
-    assert old_only, "golden 里必须有老轨道条件，否则⑧格测不了（golden 结构变了？）"
+    #
+    # ⚠️ 2026-11-20 修正：老轨道条件必须**取自本政策**。
+    #    原来从全量 conds 里挑"老政策通道"的条件（跨 8 个政策），
+    #    但 policy_meta 传的是 78 号文 —— 引擎按 doc_id 过滤后，
+    #    不属于 78 号文的老轨道条件被滤光，N/A 只剩 1 条，断言必然失败。
+    #    本意是"**这条政策**的老轨道条件对新轨道画像记 N/A"，本政策才有对照意义。
+    old_only = [c for c in conds
+                if c.doc_id == doc["doc_id"] and "老政策通道" in c.applies_to_cohort]
+    assert old_only, "golden 里本政策必须有老轨道条件，否则⑧格测不了（golden 结构变了？）"
     new_profile = {"first_insurance_date": "2023-01-01"}  # 新轨道画像
     r8 = check_eligibility(new_profile, old_only, policy_meta=doc, as_of_year=2026)
     na_cnt = sum(1 for x in r8["reasons"] if x["status"] == NOT_APPLICABLE)
@@ -652,6 +742,65 @@ def _run_fault_injection() -> int:
     if not oke:
         bad += 1
 
+    # ── 🔴 跨政策污染回归断言（2026-11-20 新增）────────────────────
+    # 这是本次修复最重要的一条断言。**没有它，这个 bug 可以一直藏着。**
+    #
+    # 缺陷是什么（2026-11-20 实测）：
+    #   `check_eligibility` 收到**别的政策**的条件时，既不报错也不过滤，
+    #   而是静默算进去。判定 78 号文时把 20 个政策 52 条条件全算了，
+    #   其中 6 条区级「意向租住区为 X 区」判 FAIL，
+    #   而 `if FAIL in statuses:` 让 FAIL 优先于 UNKNOWN
+    #   → **verdict 被压成 INELIGIBLE，「信息不足」被判成「不符合」。**
+    #
+    # 为什么它藏得住（这才是关键）：
+    #   `cli.py` 和 `evaluate.py` **各自都做了 doc_id 过滤**，所以它们的输出一直是对的。
+    #   只有引擎自测这一处传了全量 → **只有跑 `python -m src.engine.eligibility`
+    #   才会暴露它**。哪天没人跑那条命令，它就一直躺着。
+    #
+    # 这条断言干的事：把「传全量」当成正常用法，明确要求引擎自己过滤。
+    # **它一改就撞上。**
+    foreign = [c for c in conds if c.doc_id != doc["doc_id"]][:3]
+    own = [c for c in conds if c.doc_id == doc["doc_id"]][:1]
+    rr = check_eligibility(profile, foreign + own, policy_meta=doc)
+    n_own = len(own)
+    oke = len(rr["reasons"]) == n_own
+    print(f"  {'✅' if oke else '🔴'} 传入 {len(foreign)} 条别的政策+{n_own} 条本政策 → "
+          f"只算本政策 {n_own} 条   实得 reasons={len(rr['reasons'])} 条")
+    if not oke:
+        bad += 1
+
+    # 同一条断言的另一半：**不能因为过滤而判成"什么都符合"**。
+    # 如果过滤把条件全滤光，reasons 为空 → 没有 FAIL → 会判 ELIGIBLE，
+    # 那是本模块开头就禁掉的"对每个人都判能享受"。
+    #
+    # ⚠️ 2026-11-20 修正断言的**期望值**：
+    #    引擎现在对"过滤后一条条件都不剩"直接抛 EligibilityError（报错），
+    #    而不是返回一个空 reasons 判 ELIGIBLE。
+    #    两种做法都能防止假阳性，但**报错更安全** ——
+    #    返回空 reasons 的话，调用方拿到 dict 照样能用，判错时无从察觉。
+    #    所以这里断言的应该是"必须抛异常"。
+    try:
+        rr = check_eligibility(profile, foreign, policy_meta=doc)
+        oke2 = False
+        detail = f"没报错，返回了 verdict={rr['verdict']}"
+    except EligibilityError:
+        oke2 = True
+        detail = "正确报错"
+    print(f"  {'✅' if oke2 else '🔴'} 本政策无任何条件 → 必须报错不许判 ELIGIBLE   {detail}")
+    if not oke2:
+        bad += 1
+
+    # 第三条：**policy_meta 没有 doc_id 时必须给出警告**。
+    # 这种情况下引擎无法确定判哪条政策，只能按传入的全部条件判 ——
+    # 而那可能是 20 个政策混在一起（就是本次要消灭的假阳性）。
+    # 老行为是**静默**混算，输出上看不出来，所以这里要求它必须说。
+    rr = check_eligibility(profile, conds, policy_meta={"title": "无 doc_id 测试"})
+    oke3 = bool(rr.get("status_warning")) and "doc_id" in rr["status_warning"]
+    print(f"  {'✅' if oke3 else '🔴'} policy_meta 无 doc_id → 必须警告混算   "
+          f"warning={str(rr.get('status_warning'))[:44]}")
+    if not oke3:
+        bad += 1
+
     # ── exempt_when 与 ambiguity 互斥（wb 疑点 B，所有者已批）──────────
     # 两者表达同一件事时是冗余 → 改一个忘改另一个 = 静默失效。
     # 实测来源：`_01` 原来的 ambiguity 就是"研究生不受年龄限制"。
@@ -671,11 +820,14 @@ def _run_fault_injection() -> int:
 
     # ── status_detail：计算类的 UNKNOWN 必须说清是"缺字段"还是"引擎算不了" ──
     # ⚠️ 必须**新跑一次**取结果 —— 上面那个 `r` 是"已废止"的调用，reasons 本来就是空的
-    # v4.1 加入区级硬条件后，全量混合会出现跨政策 FAIL，整体变成 INELIGIBLE；
-    # SPEC 又规定 missing_fields 只在 UNKNOWN 时输出。这里单独测计算类，
-    # 才能稳定验证“缺 market_rent 要追问用户”。
-    calc_cond = next(c for c in conds if c.cond_type == CALC_TYPE)
-    r_calc = check_eligibility(profile, [calc_cond], policy_meta=doc)
+    #
+    # ⚠️ 2026-11-20 改回全量传入（此前 T06 把它收窄成"只传单条计算类条件"）：
+    #    当时是因为引擎不按 doc_id 过滤，全量传入会让别的政策的 FAIL
+    #    压掉 UNKNOWN，导致这条断言测不到「缺 market_rent 要追问用户」——
+    #    **于是收窄测试把缺陷藏起来了**。
+    #    现在引擎自己会按 doc_id 过滤（见 check_eligibility），
+    #    全量传入就是安全的 —— 而且这样才是真的在测「调用方传全量时的行为」。
+    r_calc = check_eligibility(profile, conds, policy_meta=doc)
     cr = next((x for x in r_calc["reasons"] if x.get("is_calc")), None)
     # 缺输入字段 → 走 missing_fields（用户能补），**不是** status_detail（引擎短板）
     okd = cr is not None and "market_rent" in r_calc["missing_fields"]

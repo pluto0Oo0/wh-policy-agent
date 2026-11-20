@@ -1,17 +1,17 @@
-"""golden v4 构建：v3.1（13 条）+ T04 独立条（28 条）。
+"""golden v4 构建：v3.1（13 条）+ T04 独立条（39 条）。
 
 输入：
     eval/v3_draft/golden_conditions_v3_1.jsonl 修正版 v3.1（13 条；_14 移到 v4_benefits）
     eval/t04_draft/conditions-DRAFT.jsonl      Codex T04 草案（89 条）
     eval/t04_draft/*.txt                       19 份原文快照
 输出：
-    eval/golden_conditions.jsonl               v4（41 条）
+    eval/golden_conditions.jsonl               v4.1（52 条）
     eval/v4_lineage.jsonl                      derived 14 条，只记归属
-    eval/v4_pending.jsonl                      47 条待拍板/待公式
+    eval/v4_pending.jsonl                      36 条待拍板/待公式
 
 三分规则（2026-11-11 与进度存档一致）：
     derived_from 非空       → lineage，不进 conditions
-    可判定的独立条（28 条）  → 转 Condition，进 v4
+    可判定的独立条（39 条）  → 转 Condition，进 v4.1
     其余                    → pending，写明原因，不静默丢弃
 
 为什么 pending 也要落盘：
@@ -138,11 +138,11 @@ def main() -> int:
             "quote": r["quote"], "reason": reason,
         })
 
-    # ── 分区断言：89 条草案必须 = 14 + 28 + 47（v3.1 的 13 条不在草案内） ─────────────────────
+    # ── 分区断言：89 条草案必须 = 14 + 39 + 36（v3.1 的 13 条不在草案内） ─────────────────────
     total = len(lineage) + len(added) + len(pending)
     if total != len(drafts):
         raise SystemExit(f"🔴 分区丢条：{len(drafts)} 条草案只落了 {total} 条")
-    if (len(lineage), len(added)) != (14, 28):
+    if (len(lineage), len(added)) != (14, 39):
         raise SystemExit(f"🔴 分区数不符：derived={len(lineage)} added={len(added)}")
     ids = [c["cond_id"] for c in golden]
     if len(ids) != len(set(ids)):
@@ -169,7 +169,7 @@ def main() -> int:
     dump_jsonl(EVAL / "v4_lineage.jsonl", lineage)
     dump_jsonl(EVAL / "v4_pending.jsonl", pending)
 
-    print(f"v4 = v3 {len(v3)} + T04 {len(added)} = {len(golden)} 条，{len({c['doc_id'] for c in golden})} 个政策")
+    print(f"v4.1 = v3.1 {len(v3)} + T04 {len(added)} = {len(golden)} 条，{len({c['doc_id'] for c in golden})} 个政策")
     print(f"derived 归属 {len(lineage)} 条；pending {len(pending)} 条")
     print(f"引文核对 {len(golden)}/{len(golden)} 通过；doc_id 全部在正式库")
     return 0

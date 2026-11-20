@@ -131,12 +131,12 @@ def load_conditions(path: str | Path) -> list[Condition]:
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GOLDEN_PATH = PROJECT_ROOT / "eval" / "golden_conditions.jsonl"
 
-# golden set 的预期条件数（2026-11-11：v4 = v3.1 13 条 + T04 28 条）。
+# golden set 的预期条件数（2026-11-11：v4.1 = v3.1 13 条 + T04 39 条）。
 # 为什么写成常量而不是在断言里写死字面量：
 #   2026-10-13 实测踩过 —— 断言里写死 `!= 9`，golden set 从 9 条涨到 13 条后
 #   验收直接失败，**而失败原因是"断言过期"，不是"数据错了"**。
 #   写成一个有名字的常量，下次改数据时至少会看到它、需要主动改它。
-EXPECTED_CONDITION_COUNT = 41
+EXPECTED_CONDITION_COUNT = 52
 
 # ══════════════════════════════════════════════════════════════
 # 取值域交集检测（2026-10-13 新增，wb 建议的"强检测"）
@@ -172,6 +172,13 @@ FIELD_DOMAINS: dict[str, object] = {
     # 既不是画像静态属性，也不是引擎能算出的中间状态，
     # 永远需要用户自报或查外部系统。本期标 UNKNOWN + 追问。
     "qualification_valid": {True, False},
+    "preferred_rental_district": {"江岸", "江汉", "硚口", "汉阳", "武昌", "青山", "洪山", "东西湖",
+                                  "汉南", "蔡甸", "江夏", "黄陂", "新洲"},
+    "employment_district": {"江岸", "江汉", "硚口", "汉阳", "武昌", "青山", "洪山", "东西湖",
+                            "汉南", "蔡甸", "江夏", "黄陂", "新洲"},
+    "prior_allocation_count": (0, 99),
+    "other_housing_subsidy_received": {True, False},
+    "public_rental_housing_status": {True, False},
 }
 
 

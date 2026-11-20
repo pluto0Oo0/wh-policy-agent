@@ -84,6 +84,11 @@ FIELD_LABELS = {
     "market_rent": "你租的房子月租金（元）",
     "qualification_valid": "你的安居资格是否还在有效期内",
     "region": "所在区",
+    "preferred_rental_district": "意向租住区",
+    "employment_district": "就业创业所在区",
+    "prior_allocation_count": "参加过几次配租",
+    "other_housing_subsidy_received": "是否已享受其他保障性住房优惠",
+    "public_rental_housing_status": "是否正在承租公有住房",
 }
 
 

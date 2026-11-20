@@ -10,5 +10,10 @@
   "age": 23,
   "social_insurance_active": true,
   "marital_status": "未婚",
-  "market_rent": null
+  "market_rent": null,
+  "preferred_rental_district": "洪山",
+  "employment_district": "洪山",
+  "prior_allocation_count": 0,
+  "other_housing_subsidy_received": false,
+  "public_rental_housing_status": false
 }

@@ -671,7 +671,11 @@ def _run_fault_injection() -> int:
 
     # ── status_detail：计算类的 UNKNOWN 必须说清是"缺字段"还是"引擎算不了" ──
     # ⚠️ 必须**新跑一次**取结果 —— 上面那个 `r` 是"已废止"的调用，reasons 本来就是空的
-    r_calc = check_eligibility(profile, conds, policy_meta=doc)
+    # v4.1 加入区级硬条件后，全量混合会出现跨政策 FAIL，整体变成 INELIGIBLE；
+    # SPEC 又规定 missing_fields 只在 UNKNOWN 时输出。这里单独测计算类，
+    # 才能稳定验证“缺 market_rent 要追问用户”。
+    calc_cond = next(c for c in conds if c.cond_type == CALC_TYPE)
+    r_calc = check_eligibility(profile, [calc_cond], policy_meta=doc)
     cr = next((x for x in r_calc["reasons"] if x.get("is_calc")), None)
     # 缺输入字段 → 走 missing_fields（用户能补），**不是** status_detail（引擎短板）
     okd = cr is not None and "market_rent" in r_calc["missing_fields"]

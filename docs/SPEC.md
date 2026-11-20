@@ -207,11 +207,17 @@
   "first_insurance_date": "2026-07-01",
   "employed": true,
   "housing_owned_in_wuhan": false,
-  "region": "洪山"
+  "region": "洪山",
+  "preferred_rental_district": "洪山",
+  "employment_district": "洪山",
+  "prior_allocation_count": 0,
+  "other_housing_subsidy_received": false,
+  "public_rental_housing_status": false
 }
 ```
 
 > `first_insurance_date` 是 **grandfathering 的分界依据**（2022-06-07 前后），不可省。
+> 新增 v4.1 画像字段：`preferred_rental_district` / `employment_district` 取武汉 13 个行政区短名；`prior_allocation_count` 取 0–99；`other_housing_subsidy_received` 和 `public_rental_housing_status` 取 bool。
 
 ### 2.4 判定结果 `ask()` 返回值
 

@@ -1,31 +1,21 @@
 {"draft_id": "t20251011_2658454_D03", "doc_id": "t20251011_2658454", "cond_type": "资格", "field_suggest": "qualification_valid", "quote": "经本人申请最多可再延长2年", "reason": "权益条款（优惠/延长期限），不是画像可判定的资格条件"}
 {"draft_id": "t20251011_2658454_D04", "doc_id": "t20251011_2658454", "cond_type": "计算", "field_suggest": "rent", "quote": "延长期内租金标准按照市场价执行", "reason": "计算类公式待 formula DSL（SPEC 契约缺口，calc.py 只认六重叠加）"}
-{"draft_id": "t20251011_2658454_D06", "doc_id": "t20251011_2658454", "cond_type": "资格", "field_suggest": null, "quote": "意向租住区为硚口区", "reason": "需新增画像字段（待所有者拍板）"}
 {"draft_id": "t20251011_2658454_D07", "doc_id": "t20251011_2658454", "cond_type": "计算", "field_suggest": "rent", "quote": "按照合同价的60%向博士毕业生发放租金补贴", "reason": "计算类公式待 formula DSL（SPEC 契约缺口，calc.py 只认六重叠加）"}
-{"draft_id": "t20240105_2337618_D03", "doc_id": "t20240105_2337618", "cond_type": "资格", "field_suggest": null, "quote": "意向租住区为江岸区", "reason": "需新增画像字段（待所有者拍板）"}
-{"draft_id": "t20240105_2337618_D04", "doc_id": "t20240105_2337618", "cond_type": "资格", "field_suggest": null, "quote": "且尚未参加过配租", "reason": "需新增画像字段（待所有者拍板）"}
 {"draft_id": "t20240221_2361801_D04", "doc_id": "t20240221_2361801", "cond_type": "计算", "field_suggest": "rent", "quote": "对合同实际缴交价格与优惠后价格的差额部分进行补贴", "reason": "计算类公式待 formula DSL（SPEC 契约缺口，calc.py 只认六重叠加）"}
 {"draft_id": "t20240326_2379071_D03", "doc_id": "t20240326_2379071", "cond_type": "计算", "field_suggest": "rent", "quote": "市场评估租金为30元/", "reason": "计算类公式待 formula DSL（SPEC 契约缺口，calc.py 只认六重叠加）"}
-{"draft_id": "t20240326_2379071_D05", "doc_id": "t20240326_2379071", "cond_type": "资格", "field_suggest": null, "quote": "意向配租区为青山区", "reason": "需新增画像字段（待所有者拍板）"}
-{"draft_id": "t20260917_2848978_D03", "doc_id": "t20260917_2848978", "cond_type": "资格", "field_suggest": null, "quote": "意向租住区为洪山区", "reason": "需新增画像字段（待所有者拍板）"}
-{"draft_id": "t20260917_2848978_D04", "doc_id": "t20260917_2848978", "cond_type": "资格", "field_suggest": null, "quote": "不得重复享受其他保障性住房优惠政策", "reason": "需新增画像字段（待所有者拍板）"}
 {"draft_id": "t20260917_2848978_D05", "doc_id": "t20260917_2848978", "cond_type": "资格", "field_suggest": null, "quote": "在购买商品房或大学毕业生安居房后，应退出人才租赁房", "reason": "需新增画像字段（待所有者拍板）"}
 {"draft_id": "t20260917_2848978_D06", "doc_id": "t20260917_2848978", "cond_type": "资格", "field_suggest": "qualification_valid", "quote": "不再符合人才租赁房保障条件", "reason": "退出/失效条款，不是申请时的资格条件"}
 {"draft_id": "t20211125_1859832_D01", "doc_id": "t20211125_1859832", "cond_type": "计算", "field_suggest": "rent", "quote": "30%", "reason": "计算类公式待 formula DSL（SPEC 契约缺口，calc.py 只认六重叠加）"}
 {"draft_id": "t20211125_1859832_D06", "doc_id": "t20211125_1859832", "cond_type": "材料", "field_suggest": null, "quote": "申请人身份证", "reason": "需新增画像字段（待所有者拍板）"}
 {"draft_id": "t20260904_2843303_D02", "doc_id": "t20260904_2843303", "cond_type": "资格", "field_suggest": "qualification_valid", "quote": "经本人申请最多可再延长2年", "reason": "权益条款（优惠/延长期限），不是画像可判定的资格条件"}
 {"draft_id": "t20260904_2843303_D03", "doc_id": "t20260904_2843303", "cond_type": "计算", "field_suggest": "rent", "quote": "延长期内租金标准按照市场价执行", "reason": "计算类公式待 formula DSL（SPEC 契约缺口，calc.py 只认六重叠加）"}
-{"draft_id": "t20260904_2843303_D05", "doc_id": "t20260904_2843303", "cond_type": "资格", "field_suggest": null, "quote": "意向租住为江夏区", "reason": "需新增画像字段（待所有者拍板）"}
 {"draft_id": "t20260623_2780693_D01", "doc_id": "t20260623_2780693", "cond_type": "计算", "field_suggest": "rent", "quote": "符合条件可享受50%租金优惠", "reason": "计算类公式待 formula DSL（SPEC 契约缺口，calc.py 只认六重叠加）"}
-{"draft_id": "t20260623_2780693_D04", "doc_id": "t20260623_2780693", "cond_type": "资格", "field_suggest": null, "quote": "意向租住区为新洲区", "reason": "需新增画像字段（待所有者拍板）"}
 {"draft_id": "t20200103_485775_D01", "doc_id": "t20200103_485775", "cond_type": "计算", "field_suggest": "rent", "quote": "市场租金标准为9.5元/㎡·月，配租租金3.8元/㎡·月", "reason": "计算类公式待 formula DSL（SPEC 契约缺口，calc.py 只认六重叠加）"}
 {"draft_id": "t20200103_485775_D02", "doc_id": "t20200103_485775", "cond_type": "计算", "field_suggest": "rent", "quote": "市场租金为1000元/间·月，配租租金为500元/间·月", "reason": "计算类公式待 formula DSL（SPEC 契约缺口，calc.py 只认六重叠加）"}
 {"draft_id": "t20200103_485775_D03", "doc_id": "t20200103_485775", "cond_type": "时序互斥", "field_suggest": null, "quote": "2019年7月5日（含）前通过大学毕业生租赁房租赁资格审核", "reason": "需新增画像字段（待所有者拍板）"}
-{"draft_id": "t20200103_485775_D04", "doc_id": "t20200103_485775", "cond_type": "资格", "field_suggest": null, "quote": "意向租住区为蔡甸区", "reason": "需新增画像字段（待所有者拍板）"}
 {"draft_id": "t20240711_2427280_D05", "doc_id": "t20240711_2427280", "cond_type": "计算", "field_suggest": "rent", "quote": "享受市场租金的70%（合租）、80%（整租）租金优惠", "reason": "计算类公式待 formula DSL（SPEC 契约缺口，calc.py 只认六重叠加）"}
 {"draft_id": "t20240711_2427280_D06", "doc_id": "t20240711_2427280", "cond_type": "时序互斥", "field_suggest": "first_insurance_date", "quote": "2022年6月7日之前留汉（以首次缴纳社保时点认定）", "reason": "与 cohort 双轨机制重复（该条本身就是轨道定义），且含未申请人才安居资格的缺失字段"}
 {"draft_id": "t20240711_2427280_D07", "doc_id": "t20240711_2427280", "cond_type": "时序互斥", "field_suggest": null, "quote": "未申请人才安居资格", "reason": "需新增画像字段（待所有者拍板）"}
-{"draft_id": "t20240711_2427280_D08", "doc_id": "t20240711_2427280", "cond_type": "资格", "field_suggest": null, "quote": "在汉阳区就业创业并正常缴纳社保", "reason": "需新增画像字段（待所有者拍板）"}
 {"draft_id": "t20240711_2427280_D09", "doc_id": "t20240711_2427280", "cond_type": "资格", "field_suggest": "housing_owned_in_wuhan", "quote": "家庭在中心城区无自有住房", "reason": "无房范围窄于画像字段（原文限中心城区，画像字段为武汉全市），需新字段或人工裁量"}
 {"draft_id": "t20240711_2427280_D10", "doc_id": "t20240711_2427280", "cond_type": "资格", "field_suggest": "qualification_valid", "quote": "自资格审核通过之日起享受3年租金优惠", "reason": "权益条款（优惠/延长期限），不是画像可判定的资格条件"}
 {"draft_id": "t20240711_2427280_D11", "doc_id": "t20240711_2427280", "cond_type": "计算", "field_suggest": "rent", "quote": "博士研究生第1、2、3年免租", "reason": "计算类公式待 formula DSL（SPEC 契约缺口，calc.py 只认六重叠加）"}
@@ -36,7 +26,6 @@
 {"draft_id": "t20260807_2831039_D02", "doc_id": "t20260807_2831039", "cond_type": "资格", "field_suggest": null, "quote": "在本市内无自有住房，或符合我市人才租赁房承租条件", "reason": "需新增画像字段（待所有者拍板）"}
 {"draft_id": "t20260807_2831039_D06", "doc_id": "t20260807_2831039", "cond_type": "材料", "field_suggest": null, "quote": "申请人或申请人及配偶、未成年子女身份证明", "reason": "需新增画像字段（待所有者拍板）"}
 {"draft_id": "t20260807_2831039_D07", "doc_id": "t20260807_2831039", "cond_type": "计算", "field_suggest": "rent", "quote": "以不超过市场评估租金标准的85%收取", "reason": "计算类公式待 formula DSL（SPEC 契约缺口，calc.py 只认六重叠加）"}
-{"draft_id": "t20230802_2241617_D05", "doc_id": "t20230802_2241617", "cond_type": "资格", "field_suggest": null, "quote": "无自有产权住房或承租公有住房", "reason": "需新增画像字段（待所有者拍板）"}
 {"draft_id": "t20230802_2241617_D07", "doc_id": "t20230802_2241617", "cond_type": "资格", "field_suggest": "qualification_valid", "quote": "租赁期限不超过3年", "reason": "权益条款（优惠/延长期限），不是画像可判定的资格条件"}
 {"draft_id": "t20230802_2241617_D08", "doc_id": "t20230802_2241617", "cond_type": "资格", "field_suggest": null, "quote": "入住人才因住房情况发生变化、不再符合人才安居条件的，应主动及时告知运营机构", "reason": "需新增画像字段（待所有者拍板）"}
 {"draft_id": "t20230802_2241617_D09", "doc_id": "t20230802_2241617", "cond_type": "时序互斥", "field_suggest": "qualification_valid", "quote": "人才租赁房租赁期满后应予退出", "reason": "退出/失效条款，不是申请时的资格条件"}

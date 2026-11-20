@@ -1,0 +1,17 @@
+﻿as_of_year: 2026
+总准确率: 50/50 = 100.0%
+按 expected 类别准确率（正确数 / 该类样本数）：
+  ELIGIBLE: 22/22 = 100.0%
+  INELIGIBLE: 22/22 = 100.0%
+  UNKNOWN: 6/6 = 100.0%
+混淆矩阵（行=expected，列=got）：
+  expected\got     ELIGIBLE   INELIGIBLE      UNKNOWN
+       ELIGIBLE           22            0            0
+     INELIGIBLE            0           22            0
+        UNKNOWN            0            0            6
+失败清单：
+  （无）
+expected_missing 与引擎 missing_fields 差异：
+  （无）
+覆盖信息：输入用例数=50，参与用例数=50，参与政策数=8
+跳过政策：无

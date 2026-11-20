@@ -666,7 +666,13 @@ def _run_fault_injection() -> int:
     #    "以首次社保时点分轨"这条规则），那样过滤会把轨道条件全排掉，
     #    CohortError 永远不触发，断言测了个空集。
     track_conds = [c for c in conds if "全体" not in c.applies_to_cohort]
-    assert track_conds, "golden 里必须有轨道条件，否则⑨格测不了（golden 结构变了？）"
+    # ⚠️ 这里**不用 assert** —— `python -O` 会把 assert 整条剥掉，
+    #    前提不成立时就会静默继续走进 next() 抛 StopIteration（一个看不懂的异常），
+    #    甚至让断言变成恒真。用 raise 不受 -O 影响。
+    if not track_conds:
+        raise EligibilityError(
+            "golden 里必须有轨道条件，否则⑨格测不了（golden 结构变了？）"
+        )
     r9 = check_eligibility({}, track_conds, policy_meta=doc)
     r9_ids = {x["cond_id"] for x in r9["reasons"]}
     got9 = {x["cond_id"] for x in r9["reasons"] if x["status"] == UNKNOWN}
@@ -689,7 +695,11 @@ def _run_fault_injection() -> int:
     #    本意是"**这条政策**的老轨道条件对新轨道画像记 N/A"，本政策才有对照意义。
     old_only = [c for c in conds
                 if c.doc_id == doc["doc_id"] and "老政策通道" in c.applies_to_cohort]
-    assert old_only, "golden 里本政策必须有老轨道条件，否则⑧格测不了（golden 结构变了？）"
+    # ⚠️ 不用 assert（`python -O` 会剥掉它，前提不成立时会静默继续）——见上面 track_conds 处
+    if not old_only:
+        raise EligibilityError(
+            "golden 里本政策必须有老轨道条件，否则⑧格测不了（golden 结构变了？）"
+        )
     new_profile = {"first_insurance_date": "2023-01-01"}  # 新轨道画像
     r8 = check_eligibility(new_profile, old_only, policy_meta=doc, as_of_year=2026)
     na_cnt = sum(1 for x in r8["reasons"] if x["status"] == NOT_APPLICABLE)

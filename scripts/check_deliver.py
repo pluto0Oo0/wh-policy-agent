@@ -29,15 +29,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from checks import config as C  # noqa: E402
+from checks import contract_checks as K  # noqa: E402
 from checks import data_checks as D  # noqa: E402
 from checks.expected_samples import check_expected_samples as _check_samples  # noqa: E402
 from checks.module_tests import check_module_selftests  # noqa: E402
 
-# 四个"可自动判定"的检查 + 两个"只警告"的检查
+# 五个"可自动判定"的检查 + 两个"只警告"的检查
 AUTO_CHECKS = [
     ("静默吞错", C.check_silent_except),
     ("显式编码", C.check_encoding),
     ("JSONL 完整性", D.check_jsonl),
+    ("画像契约同步", K.check_profile_contract),
     ("模块自测（全仓）", check_module_selftests),
 ]
 WARN_CHECKS = [

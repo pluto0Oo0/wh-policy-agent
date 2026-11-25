@@ -73,6 +73,7 @@ FIELD_LABELS = {
     "age": "年龄（周岁）",
     "education": "学历（大专/本科/硕士/博士）",
     "education_type": "学习形式（全日制/非全日制）",
+    "education_file": "毕业证书（或学信网学历验证报告）",
     "grad_year": "毕业年份",
     "grad_years": "毕业年数",
     "hukou_wuhan": "是否武汉户籍",

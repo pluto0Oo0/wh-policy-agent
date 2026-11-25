@@ -200,13 +200,20 @@
 
 ```json
 {
+  "age": 24,
   "education": "本科",
   "education_type": "全日制",
+  "education_file": "毕业证.pdf",
   "grad_year": 2026,
+  "grad_years": 2,
   "hukou_wuhan": false,
   "first_insurance_date": "2026-07-01",
   "employed": true,
   "housing_owned_in_wuhan": false,
+  "social_insurance_active": true,
+  "qualification_valid": true,
+  "market_rent": 2500,
+  "marital_status": "未婚",
   "region": "洪山",
   "preferred_rental_district": "洪山",
   "employment_district": "洪山",
@@ -218,6 +225,25 @@
 
 > `first_insurance_date` 是 **grandfathering 的分界依据**（2022-06-07 前后），不可省。
 > 新增 v4.1 画像字段：`preferred_rental_district` / `employment_district` 取武汉 13 个行政区短名；`prior_allocation_count` 取 0–99；`other_housing_subsidy_received` 和 `public_rental_housing_status` 取 bool。
+
+> ⚠️ **2026-11-25 更正：本节此前漏声明了 5 个字段**（`age` / `marital_status` /
+> `market_rent` / `social_insurance_active` / `education_file` / `grad_years`），
+> **而这 6 个都是条件真正在用的字段**——`eval/golden_conditions.jsonl` 里
+> `age`、`social_insurance_active`、`education_file`、`grad_years`、`market_rent`
+> 各有条件引用，`data/profile.json` 与评测集也在用。
+> 也就是说：**契约写的字段集比实现实际需要的字段集小**，
+> 照着本节写画像会**漏字段 → 引擎判 UNKNOWN → 用户拿不到结论**。
+> 上面的 JSON 已改成**与实现一致**（评测集实际用到的 12 个字段 + `grad_years`/`marital_status`/`market_rent`）。
+>
+> **为什么现在才发现**：本节的 JSON 抄自 `data/profile.json` 的**早期版本**，
+> 之后 v3/v4 一路加字段（`age`、`social_insurance_active`、`education_file`……
+> **加在实现里和评测集里，唯独没同步回本节**）。
+> **这正是「契约不跟着实现走」的典型形态**——
+> 判错的时候不会报错，只会**默默少一个字段**。
+>
+> **核对方法**（可复跑）：`eval/eval_cases.jsonl` 50 个用例的 `profile` 字段并集
+> 与本节 JSON 的键集比对；`eval/golden_conditions.jsonl` 的 `field` 列并集与本节比对。
+> **字段集不一致 = 本节过期。**
 
 ### 2.4 判定结果 `ask()` 返回值
 

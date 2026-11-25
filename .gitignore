@@ -23,3 +23,9 @@ _tasks/
 # 为什么排除：它是 wb 程序的工作目录，内容每次运行都在变；
 # 权威事实在 _handoff/CONTEXT.md，那份是入库的。
 .workbuddy/
+
+# 11-11 遗留的空壳目录：内容是 .claude/skills/deliver-check/SKILL.md 的旧副本
+# （只差 6 行，区别在引用 AGENTS.md 还是 CLAUDE.md）。
+# 为什么排除：它是**重复内容**，仓库里已有正本（.claude/ 那份是入库的）。
+# 为什么不删：删文件是红线，等所有者点头。此处只挡住它被误提交。
+.agents/
